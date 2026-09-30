@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "cards": [
+    {
+      "id": "kin001",
+      "title": "Scaffold: project root, vendored repos, venv, config store",
+      "status": "done",
+      "description": "F:/aaaaaVIBECODING/Kinesis created. whitehatboy005/Virtual-Mouse and xinghaochen/awesome-hand-pose-estimation cloned into vendor/. The earlier fixed build preserved in reference/legacy/. kinesis/config.py holds defaults + the calibration store. Monitor enumeration via EnumDisplayMonitors indexes the 4 displays left-to-right."
+    },
+    {
+      "id": "kin002",
+      "title": "Latency and jitter: snap cursor, One-Euro filter, deadband",
+      "status": "done",
+      "description": "Capture thread keeps only the newest frame (BUFFERSIZE=1); inference thread drops stale frames. One-Euro filter on all 21 landmark axes (min_cutoff 1.6, beta 0.05) plus a deadband so a still hand gives a still cursor. Cursor written with SetCursorPos via ctypes, no pyautogui, no easing. Measured end-to-end 45-48 ms average, 81-104 ms peak, camera-limited at 15 fps."
+    },
+    {
+      "id": "kin003",
+      "title": "Pose engine: joint-angle fingers, poses, pointing angles",
+      "status": "done",
+      "description": "Finger states from the PIP joint angle with hysteresis (>155 extended, <110 curled) so a rotated hand still reads correctly - the property upstream lacked. Scale-relative pinch thresholds (wrist to middle knuckle). Poses OPEN/FIST/SHAKA/POINT/PINCH_x/MIXED. Pointing yaw/pitch from MediaPipe metric world landmarks with a consistent 2D fallback. Rotation invariance verified at 0/45/90/135/-90 degrees."
+    },
+    {
+      "id": "kin004",
+      "title": "Aim: calibration wizard + monitor classifier",
+      "status": "done",
+      "description": "calibrate.py samples pointing angles per monitor for 2 s each, saves kinesis_calibration.json, and reports whether the angles are monotonic left-to-right. Classifier = nearest centroid in yaw/pitch with 7 deg hysteresis and a 42 deg distance gate; heuristic virtual-desktop mapping before calibration. Tested against the real 4-monitor layout."
+    },
+    {
+      "id": "kin005",
+      "title": "Gestures: all eleven, with conflict arbitration",
+      "status": "done",
+      "description": "Eleven gestures implemented as an explicit state machine emitting Intent objects (no Windows calls in the engine). Includes the click-vs-close-flick arbitration (pinch arms a click, a fist inside the 120 ms release grace cancels it), single held-action lock, swipe cooldown, and the two-handed Alt-Tab flow."
+    },
+    {
+      "id": "kin006",
+      "title": "Actions: aimed window targeting, fullscreen-aware minimise, Alt-Tab, PTT",
+      "status": "done",
+      "description": "Topmost non-blocklisted window on the aimed monitor is the target. Fullscreen detected by rect-equals-monitor + not maximised; minimise exits fullscreen first via a deferred queue so the tracking loop never blocks. YouTube detection by window title picks f vs F11. Shift+cursor lock in browsers, no frozen cursor during drag."
+    },
+    {
+      "id": "kin007",
+      "title": "HUD + safety: release-all, dry run, END key",
+      "status": "done",
+      "description": "Preview overlay shows pose, aim + confidence, active action, yaw/pitch, fps and end-to-end latency. release_all covers drag/Alt/Ctrl+Space and runs on hand loss, exit, exception and END. --dry logs every action without injecting; --exclusive limits to cursor movement only."
+    },
+    {
+      "id": "kin008",
+      "title": "Tests: 53 deterministic checks, no camera needed",
+      "status": "done",
+      "description": "Synthetic landmark geometry with exact joint angles drives the real PoseDetector and GestureEngine. Covers every gesture, the conflict rules, hysteresis/cooldowns, aim classification, the One-Euro filter, wheel accumulation, deadband and release-all. 53 passed."
+    },
+    {
+      "id": "kin009",
+      "title": "Joe: calibrate aim at the desk and report feel",
+      "status": "backlog",
+      "description": "Needs hands on: run calibrate.bat pointing at each of the 4 displays, then run.bat. Report pinch tightness, filter smoothness, swipe threshold and flick timing. Every threshold is exposed via --tune so tuning is numbers, not guesswork."
+    },
+    {
+      "id": "kin010",
+      "title": "Tune gesture thresholds from live use",
+      "status": "backlog",
+      "description": "Adjust pinch_on/off, filter_min_cutoff, filter_beta, deadband_px, flick_window_s, swipe_min_fraction, scroll_gain, alt_tab_hold_s based on what Joe reports, then --save-config."
+    },
+    {
+      "id": "kin011",
+      "title": "Publish to GitHub as DrGekoz/Kinesis",
+      "status": "backlog",
+      "description": "Local git repo initialised and committed. Pushing to GitHub is deliberately left as an explicit request - vendor/ submodules and cast/ref assets excluded, .venv ignored."
+    },
+    {
+      "id": "kin012",
+      "title": "Upgrade path: better 3D hand pose for aiming accuracy",
+      "status": "backlog",
+      "description": "If aiming accuracy is not enough with MediaPipe, the curated list points at HAPTIX (CVPR 2024, reconstructing hands in 3D with transformers) or HaMuCo (ICCV 2023) for pose quality, Deformer (ICCV 2023) for temporal jitter fusion, and FastHand/MobRecon if speed is the constraint. A custom gesture classifier would train on RHD (41k synthetic, free labels) or FreiHAND."
+    }
+  ]
+}

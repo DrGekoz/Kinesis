@@ -1,0 +1,469 @@
+"""Windows plumbing: monitor layout, window inspection/control, input injection.
+
+Everything here is ctypes against user32 - no pyautogui, no keyboard library, so there is no
+FAILSAFE behaviour to trip over and no per-call Python overhead in the hot path.
+"""
+from __future__ import annotations
+
+import ctypes
+import os
+from ctypes import wintypes
+from dataclasses import dataclass
+from typing import List, Optional, Sequence
+
+user32 = ctypes.WinDLL("user32", use_last_error=True)
+kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+# ---------------------------------------------------------------- constants
+SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN = 76, 77
+SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN = 78, 79
+
+MONITORINFOF_PRIMARY = 0x00000001
+MONITOR_DEFAULTTONEAREST = 2
+
+GWL_EXSTYLE = -20
+WS_EX_TOOLWINDOW = 0x00000080
+WS_EX_APPWINDOW = 0x00040000
+
+SW_MINIMIZE, SW_MAXIMIZE, SW_RESTORE, SW_SHOW = 6, 3, 9, 5
+SWP_NOSIZE, SWP_NOMOVE, SWP_NOACTIVATE = 0x0001, 0x0002, 0x0010
+HWND_TOP = 0
+
+INPUT_MOUSE, INPUT_KEYBOARD = 0, 1
+MOUSEEVENTF_MOVE = 0x0001
+MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP = 0x0002, 0x0004
+MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP = 0x0008, 0x0010
+MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP = 0x0020, 0x0040
+MOUSEEVENTF_WHEEL, MOUSEEVENTF_HWHEEL = 0x0800, 0x1000
+KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP = 0x0001, 0x0002
+
+WHEEL_DELTA = 120
+
+VK = {
+    "backspace": 0x08, "tab": 0x09, "enter": 0x0D, "shift": 0x10, "ctrl": 0x11,
+    "control": 0x11, "alt": 0x12, "pause": 0x13, "capslock": 0x14, "esc": 0x1B,
+    "escape": 0x1B, "space": 0x20, "pageup": 0x21, "pagedown": 0x22, "end": 0x23,
+    "home": 0x24, "left": 0x25, "up": 0x26, "right": 0x27, "down": 0x28,
+    "insert": 0x2D, "delete": 0x2E,
+    "0": 0x30, "1": 0x31, "2": 0x32, "3": 0x33, "4": 0x34,
+    "5": 0x35, "6": 0x36, "7": 0x37, "8": 0x38, "9": 0x39,
+    "a": 0x41, "b": 0x42, "c": 0x43, "d": 0x44, "e": 0x45, "f": 0x46, "g": 0x47,
+    "h": 0x48, "i": 0x49, "j": 0x4A, "k": 0x4B, "l": 0x4C, "m": 0x4D, "n": 0x4E,
+    "o": 0x4F, "p": 0x50, "q": 0x51, "r": 0x52, "s": 0x53, "t": 0x54, "u": 0x55,
+    "v": 0x56, "w": 0x57, "x": 0x58, "y": 0x59, "z": 0x5A,
+    "lwin": 0x5B, "rwin": 0x5C,
+    "f1": 0x70, "f2": 0x71, "f3": 0x72, "f4": 0x73, "f5": 0x74, "f6": 0x75,
+    "f7": 0x76, "f8": 0x77, "f9": 0x78, "f10": 0x79, "f11": 0x7A, "f12": 0x7B,
+}
+
+
+def vk_for(name: str) -> int:
+    key = str(name).strip().lower()
+    if key in VK:
+        return VK[key]
+    if len(key) == 1 and key.isalpha():
+        return ord(key.upper())
+    raise KeyError(f"no virtual-key mapping for {name!r}")
+
+
+# ---------------------------------------------------------------- structures
+class RECT(ctypes.Structure):
+    _fields_ = [("left", wintypes.LONG), ("top", wintypes.LONG),
+                ("right", wintypes.LONG), ("bottom", wintypes.LONG)]
+
+    @property
+    def width(self):
+        return self.right - self.left
+
+    @property
+    def height(self):
+        return self.bottom - self.top
+
+    def as_tuple(self):
+        return (self.left, self.top, self.right, self.bottom)
+
+
+class MONITORINFOEXW(ctypes.Structure):
+    _fields_ = [("cbSize", wintypes.DWORD),
+                ("rcMonitor", RECT),
+                ("rcWork", RECT),
+                ("dwFlags", wintypes.DWORD),
+                ("szDevice", wintypes.WCHAR * 32)]
+
+
+class POINT(ctypes.Structure):
+    _fields_ = [("x", wintypes.LONG), ("y", wintypes.LONG)]
+
+
+class WINDOWPLACEMENT(ctypes.Structure):
+    _fields_ = [("length", wintypes.UINT), ("flags", wintypes.UINT),
+                ("showCmd", wintypes.UINT), ("ptMinPosition", POINT),
+                ("ptMaxPosition", POINT), ("rcNormalPosition", RECT)]
+
+
+class MOUSEINPUT(ctypes.Structure):
+    _fields_ = [("dx", wintypes.LONG), ("dy", wintypes.LONG),
+                ("mouseData", wintypes.DWORD), ("dwFlags", wintypes.DWORD),
+                ("time", wintypes.DWORD), ("dwExtraInfo", ctypes.POINTER(wintypes.ULONG))]
+
+
+class KEYBDINPUT(ctypes.Structure):
+    _fields_ = [("wVk", wintypes.WORD), ("wScan", wintypes.WORD),
+                ("dwFlags", wintypes.DWORD), ("time", wintypes.DWORD),
+                ("dwExtraInfo", ctypes.POINTER(wintypes.ULONG))]
+
+
+class HARDWAREINPUT(ctypes.Structure):
+    _fields_ = [("uMsg", wintypes.DWORD), ("wParamL", wintypes.WORD), ("wParamH", wintypes.WORD)]
+
+
+class _INPUTUNION(ctypes.Union):
+    _fields_ = [("mi", MOUSEINPUT), ("ki", KEYBDINPUT), ("hi", HARDWAREINPUT)]
+
+
+class INPUT(ctypes.Structure):
+    _fields_ = [("type", wintypes.DWORD), ("u", _INPUTUNION)]
+
+
+user32.SendInput.argtypes = (wintypes.UINT, ctypes.POINTER(INPUT), ctypes.c_int)
+user32.SendInput.restype = wintypes.UINT
+user32.SetCursorPos.argtypes = (ctypes.c_int, ctypes.c_int)
+user32.SetCursorPos.restype = wintypes.BOOL
+user32.GetCursorPos.argtypes = (ctypes.POINTER(POINT),)
+user32.GetCursorPos.restype = wintypes.BOOL
+user32.GetSystemMetrics.argtypes = (ctypes.c_int,)
+user32.GetSystemMetrics.restype = ctypes.c_int
+
+
+# ---------------------------------------------------------------- monitors
+@dataclass
+class Monitor:
+    handle: int
+    device: str
+    left: int
+    top: int
+    right: int
+    bottom: int
+    primary: bool
+    work: tuple = (0, 0, 0, 0)
+
+    @property
+    def width(self):
+        return self.right - self.left
+
+    @property
+    def height(self):
+        return self.bottom - self.top
+
+    @property
+    def centre(self):
+        return ((self.left + self.right) // 2, (self.top + self.bottom) // 2)
+
+    def contains(self, x: int, y: int) -> bool:
+        return self.left <= x < self.right and self.top <= y < self.bottom
+
+    def __str__(self):
+        tag = ", primary" if self.primary else ""
+        return (f"{self.device} {self.width}x{self.height} at ({self.left},{self.top}){tag}")
+
+
+def _monitor_callback(hmonitor, hdc, lprc, data):
+    info = MONITORINFOEXW()
+    info.cbSize = ctypes.sizeof(MONITORINFOEXW)
+    if user32.GetMonitorInfoW(hmonitor, ctypes.byref(info)):
+        rect, work = info.rcMonitor, info.rcWork
+        found.append(Monitor(
+            handle=int(hmonitor), device=info.szDevice,
+            left=rect.left, top=rect.top, right=rect.right, bottom=rect.bottom,
+            primary=bool(info.dwFlags & MONITORINFOF_PRIMARY),
+            work=work.as_tuple()))
+    return True
+
+
+MONITORENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HMONITOR, wintypes.HDC,
+                                     ctypes.POINTER(RECT), wintypes.LPARAM)
+
+
+def enumerate_monitors(by_position: bool = True) -> List[Monitor]:
+    """Live monitor list. Sorted left-to-right by default so index 1 = leftmost,
+    which is how a person counting screens thinks about them."""
+    global found
+    found = []
+    user32.EnumDisplayMonitors(None, None, MONITORENUMPROC(_monitor_callback), 0)
+    if by_position:
+        found.sort(key=lambda m: (m.left, m.top))
+    return list(found)
+
+
+def virtual_screen() -> tuple:
+    return (user32.GetSystemMetrics(SM_XVIRTUALSCREEN), user32.GetSystemMetrics(SM_YVIRTUALSCREEN),
+            user32.GetSystemMetrics(SM_CXVIRTUALSCREEN), user32.GetSystemMetrics(SM_CYVIRTUALSCREEN))
+
+
+def monitor_at(x: int, y: int, monitors: Optional[List[Monitor]] = None) -> Optional[Monitor]:
+    monitors = monitors if monitors is not None else enumerate_monitors()
+    for m in monitors:
+        if m.contains(x, y):
+            return m
+    return None
+
+
+# ---------------------------------------------------------------- windows
+@dataclass
+class WindowInfo:
+    hwnd: int
+    title: str
+    rect: tuple            # (left, top, right, bottom)
+    monitor_index: int
+    process_id: int
+    is_maximized: bool
+    is_fullscreen: bool
+    is_foreground: bool
+
+
+class MONITORINFOPLAIN(ctypes.Structure):
+    _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", RECT), ("rcWork", RECT),
+                ("dwFlags", wintypes.DWORD)]
+
+
+def _window_rect(hwnd) -> Optional[tuple]:
+    r = RECT()
+    if user32.GetWindowRect(wintypes.HWND(hwnd), ctypes.byref(r)):
+        return r.as_tuple()
+    return None
+
+
+def _is_maximized(hwnd) -> bool:
+    return bool(user32.IsZoomed(wintypes.HWND(hwnd)))
+
+
+def _monitor_rect_for_window(hwnd) -> Optional[tuple]:
+    hmon = user32.MonitorFromWindow(wintypes.HWND(hwnd), MONITOR_DEFAULTTONEAREST)
+    if not hmon:
+        return None
+    info = MONITORINFOPLAIN()
+    info.cbSize = ctypes.sizeof(MONITORINFOPLAIN)
+    if user32.GetMonitorInfoW(hmon, ctypes.byref(info)):
+        return info.rcMonitor.as_tuple()
+    return None
+
+
+def window_info(hwnd: int, monitors: Optional[List[Monitor]] = None) -> Optional[WindowInfo]:
+    rect = _window_rect(hwnd)
+    if rect is None:
+        return None
+    monitors = monitors if monitors is not None else enumerate_monitors()
+    cx, cy = (rect[0] + rect[2]) // 2, (rect[1] + rect[3]) // 2
+    idx = 0
+    for i, m in enumerate(monitors):
+        if m.contains(cx, cy):
+            idx = i
+            break
+    pid = wintypes.DWORD()
+    user32.GetWindowThreadProcessId(wintypes.HWND(hwnd), ctypes.byref(pid))
+    mrect = _monitor_rect_for_window(hwnd)
+    tolerance = 2
+    fullscreen = False
+    if mrect is not None:
+        fullscreen = (abs(rect[0] - mrect[0]) <= tolerance and abs(rect[1] - mrect[1]) <= tolerance
+                      and abs(rect[2] - mrect[2]) <= tolerance and abs(rect[3] - mrect[3]) <= tolerance
+                      and not _is_maximized(hwnd))
+    length = user32.GetWindowTextLengthW(wintypes.HWND(hwnd))
+    buf = ctypes.create_unicode_buffer(length + 1)
+    user32.GetWindowTextW(wintypes.HWND(hwnd), buf, length + 1)
+    return WindowInfo(hwnd=hwnd, title=buf.value, rect=rect, monitor_index=idx,
+                      process_id=int(pid.value), is_maximized=_is_maximized(hwnd),
+                      is_fullscreen=fullscreen,
+                      is_foreground=(user32.GetForegroundWindow() == hwnd))
+
+
+def foreground_window(monitors: Optional[List[Monitor]] = None) -> Optional[WindowInfo]:
+    hwnd = user32.GetForegroundWindow()
+    if not hwnd:
+        return None
+    return window_info(hwnd, monitors)
+
+
+def _enum_windows():
+    handles = []
+    ENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+    def cb(hwnd, lparam):
+        handles.append(int(hwnd))
+        return True
+
+    user32.EnumWindows(ENUMPROC(cb), 0)
+    return handles
+
+
+def topmost_window_on_monitor(monitor_index: int, monitors: Optional[List[Monitor]] = None,
+                              skip_pids: Optional[set] = None,
+                              blocked_titles: Optional[Sequence[str]] = None) -> Optional[int]:
+    """Topmost focusable window whose centre sits on the given monitor.
+    EnumWindows walks top-level windows in z-order, so the first match is the top one.
+    Overlay and shell windows are excluded - they are usually fullscreen and would otherwise
+    swallow window gestures."""
+    monitors = monitors if monitors is not None else enumerate_monitors()
+    if not monitors:
+        return None
+    skip_pids = skip_pids or set()
+    blocked = tuple(t.lower() for t in (blocked_titles or ()))
+    for hwnd in _enum_windows():
+        if not user32.IsWindowVisible(wintypes.HWND(hwnd)):
+            continue
+        if user32.IsIconic(wintypes.HWND(hwnd)):
+            continue
+        length = user32.GetWindowTextLengthW(wintypes.HWND(hwnd))
+        if length == 0:
+            continue
+        buf = ctypes.create_unicode_buffer(length + 1)
+        user32.GetWindowTextW(wintypes.HWND(hwnd), buf, length + 1)
+        title = buf.value
+        if blocked and any(token in title.lower() for token in blocked):
+            continue
+        ex = user32.GetWindowLongW(wintypes.HWND(hwnd), GWL_EXSTYLE)
+        if ex & WS_EX_TOOLWINDOW and not (ex & WS_EX_APPWINDOW):
+            continue
+        info = window_info(hwnd, monitors)
+        if info is None or info.process_id in skip_pids:
+            continue
+        if info.monitor_index == monitor_index:
+            return hwnd
+    return None
+
+
+def is_fullscreen_anywhere(hwnd: int) -> bool:
+    info = window_info(hwnd)
+    return bool(info and info.is_fullscreen)
+
+
+# ---------------------------------------------------------------- input injection
+def _send(*inputs):
+    n = len(inputs)
+    arr = (INPUT * n)(*inputs)
+    return user32.SendInput(n, arr, ctypes.sizeof(INPUT))
+
+
+def _key_input(vk: int, up: bool) -> INPUT:
+    return INPUT(type=INPUT_KEYBOARD,
+                 u=_INPUTUNION(ki=KEYBDINPUT(wVk=vk, wScan=0,
+                                             dwFlags=KEYEVENTF_KEYUP if up else 0,
+                                             time=0, dwExtraInfo=None)))
+
+
+def _mouse_input(flags: int, dx: int = 0, dy: int = 0, data: int = 0) -> INPUT:
+    return INPUT(type=INPUT_MOUSE,
+                 u=_INPUTUNION(mi=MOUSEINPUT(dx=dx, dy=dy, mouseData=data & 0xFFFFFFFF,
+                                             dwFlags=flags, time=0, dwExtraInfo=None)))
+
+
+def get_cursor_pos() -> tuple:
+    p = POINT()
+    user32.GetCursorPos(ctypes.byref(p))
+    return (p.x, p.y)
+
+
+def set_cursor_pos(x: int, y: int) -> None:
+    user32.SetCursorPos(int(x), int(y))
+
+
+def mouse_click(button: str = "left") -> None:
+    if button == "left":
+        down, up = MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP
+    elif button == "right":
+        down, up = MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP
+    else:
+        down, up = MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP
+    _send(_mouse_input(down), _mouse_input(up))
+
+
+def mouse_down(button: str = "left") -> None:
+    flag = {"left": MOUSEEVENTF_LEFTDOWN, "right": MOUSEEVENTF_RIGHTDOWN,
+            "middle": MOUSEEVENTF_MIDDLEDOWN}[button]
+    _send(_mouse_input(flag))
+
+
+def mouse_up(button: str = "left") -> None:
+    flag = {"left": MOUSEEVENTF_LEFTUP, "right": MOUSEEVENTF_RIGHTUP,
+            "middle": MOUSEEVENTF_MIDDLEUP}[button]
+    _send(_mouse_input(flag))
+
+
+def scroll_wheel(clicks: int) -> None:
+    """Positive = up/away (Windows convention, same as the physical wheel)."""
+    if not clicks:
+        return
+    _send(_mouse_input(MOUSEEVENTF_WHEEL, data=int(clicks) * WHEEL_DELTA))
+
+
+def scroll_horizontal(clicks: int) -> None:
+    if not clicks:
+        return
+    _send(_mouse_input(MOUSEEVENTF_HWHEEL, data=int(clicks) * WHEEL_DELTA))
+
+
+def key_down(name: str) -> None:
+    _send(_key_input(vk_for(name), False))
+
+
+def key_up(name: str) -> None:
+    _send(_key_input(vk_for(name), True))
+
+
+def key_tap(name: str) -> None:
+    vk = vk_for(name)
+    _send(_key_input(vk, False), _key_input(vk, True))
+
+
+# ---------------------------------------------------------------- window control
+def show_window(hwnd: int, cmd: int) -> None:
+    user32.ShowWindow(wintypes.HWND(hwnd), cmd)
+
+
+def minimise(hwnd: int) -> None:
+    show_window(hwnd, SW_MINIMIZE)
+
+
+def maximise(hwnd: int) -> None:
+    show_window(hwnd, SW_MAXIMIZE)
+
+
+def restore(hwnd: int) -> None:
+    show_window(hwnd, SW_RESTORE)
+
+
+def focus_window(hwnd: int) -> None:
+    """Bring a window forward. SetForegroundWindow is rate-limited by Windows when the
+    calling process does not own the foreground window, so fall back to the
+    AttachThreadInput trick used by the Nucleus work."""
+    if user32.GetForegroundWindow() == hwnd:
+        return
+    fg = user32.GetForegroundWindow()
+    fg_thread = user32.GetWindowThreadProcessId(wintypes.HWND(fg), None) if fg else 0
+    cur_thread = kernel32.GetCurrentThreadId()
+    attached = False
+    if fg_thread and fg_thread != cur_thread:
+        attached = bool(user32.AttachThreadInput(fg_thread, cur_thread, True))
+    try:
+        user32.ShowWindow(wintypes.HWND(hwnd), SW_RESTORE)
+        user32.SetForegroundWindow(wintypes.HWND(hwnd))
+    finally:
+        if attached:
+            user32.AttachThreadInput(fg_thread, cur_thread, False)
+
+
+def own_process_id() -> int:
+    return os.getpid()
+
+
+def key_pressed(vk: int) -> bool:
+    """Physical key state, for the panic key. GetAsyncKeyState returns a SHORT with the
+    high bit set while the key is down."""
+    return bool(user32.GetAsyncKeyState(vk) & 0x8000)
+
+
+VK_END = 0x23
+
+
+def panic_pressed() -> bool:
+    return key_pressed(VK_END)

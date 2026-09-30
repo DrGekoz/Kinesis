@@ -1,0 +1,16 @@
+# python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# runtime state (per machine: monitor angles and tuned thresholds)
+kinesis_config.json
+kinesis_calibration.json
+
+# vendored upstream clones - restore with the commands in README.md
+vendor/
+
+# scratch
+*.log
