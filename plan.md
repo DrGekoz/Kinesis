@@ -79,7 +79,7 @@ there*, and separately *the mouse feels jittery*. Those pull in opposite directi
 
 Latency budget, measured stage by stage rather than assumed:
 
-| Stage | Current (upstream) | Kinesis target | How |
+| Stage | Current (upstream) | Kinesis | How |
 |---|---|---|---|
 | Camera frame | MSMF backend, no buffer limit, may serve a stale frame | newest frame only | capture thread + `BUFFERSIZE=1`, DSHOW where available |
 | Resolution | 1280x720 | 640x480 default | 2-4x less pixels through inference; configurable |
@@ -88,8 +88,18 @@ Latency budget, measured stage by stage rather than assumed:
 | Cursor write | pyautogui (≈1-3 ms + FAILSAFE checks) | `SetCursorPos` via ctypes | `winapi.py` |
 | Preview draw | `imshow` + `waitKey(1)` every frame | optional / throttled | `--no-preview` |
 
-`--latency-report` prints measured fps, per-stage milliseconds and effective end-to-end lag so the
-claim is checkable rather than asserted.
+Measured on this machine after the build (`--latency-report`, 25 s live run, real camera):
+
+```
+camera capture    15.0-15.1 fps      (device ceiling at 640x480: it reports 15 fps for YUYV and
+                                      MJPG alike when asked for 30, so this is the hardware floor)
+mediapipe         17-39 ms/frame, 14-16 fps - keeps up with capture, drops nothing
+end-to-end        45-48 ms average, 81-104 ms peak  (capture -> decision)
+main loop         340-500 fps         (the loop itself is not the bottleneck)
+```
+
+So the ~65 ms camera interval dominates; a 30 fps webcam would roughly halve the end-to-end figure.
+`--latency-report` prints exactly these numbers so the claim stays checkable rather than asserted.
 
 ---
 
@@ -131,8 +141,8 @@ Primitives are angle-based, not y-axis comparisons, so they survive an in-plane 
 | # | Gesture | Trigger | Action |
 |---|---|---|---|
 | 1 | Point | index extended | cursor follows index tip, 1:1, no easing |
-| 2 | Left click | thumb+index pinch | left click at cursor |
-| 3 | Double click | two thumb+index pinches inside 450 ms | double click |
+| 2 | Left click | thumb+index pinch | left click at cursor — committed on release after a 120 ms grace, or by holding the pinch past 350 ms |
+| 3 | Double click | two thumb+index pinches inside 450 ms | two clicks in the double-click window — the OS interprets them, exactly like a physical mouse |
 | 4 | Right click | thumb+middle pinch | right click (held-pose guarded, 600 ms) |
 | 5 | Scroll | thumb+ring pinch, held | *adaptive scroll*: vertical hand travel drives the wheel, gain rises with hand speed; cursor frozen while scrolling |
 | 6 | Drag | thumb+pinky pinch, held | mouse down on pinch, up on release — text selection, file drags |
@@ -149,11 +159,12 @@ rather than duplicated as a gesture nobody could distinguish.
 ### Conflict resolution (the part that decides whether it feels good)
 
 - **Fist vs left click.** Closing a hand into a fist passes through a pinch, which would fire a
-  stray left click. So a pinch *arms* a click for 250 ms; if the hand becomes a fist inside that
-  window the click is cancelled and gesture #7 fires instead. A pinch that releases while the hand
-  is still open fires the click.
-- **Fist vs shaka.** Fist requires index, middle, ring **and** pinky curled. Shaka keeps pinky out,
-  so #11 and #7 cannot be confused.
+  stray left click. So a pinch *arms* a click rather than firing on the pinch itself: the click is
+  committed 120 ms after the pinch is released, or immediately if the pinch is held past 350 ms
+  (which a sweep through a pinch never reaches). If a fist forms inside that 120 ms grace window
+  the pending click is cancelled and gesture #7 fires instead. Both cases are covered by tests.
+- **Fist vs shaka.** Fist requires index, middle, ring **and** pinky curled. Shaka keeps the pinky
+  out, so #11 and #7 cannot be confused.
 - **Click vs Tab.** While `Alt` is held by gesture #10, a right-hand thumb+index pinch is a `Tab`
   and never a click.
 - **Scroll/drag/swipe vs cursor.** Those three freeze the cursor for their duration so the pointer
@@ -210,33 +221,52 @@ pointing-angle feature; if a future model replaces MediaPipe, this is the harnes
 
 Status is only ticked when the phase is implemented *and* its tests pass.
 
-- [ ] **P0 — Scaffold.** Project root, vendored repos, venv, config store, monitor enumeration,
+- [x] **P0 — Scaffold.** Project root, vendored repos, venv, config store, monitor enumeration,
       ctypes input layer, `reference/legacy` provenance.
-- [ ] **P1 — Latency and jitter.** Capture thread that drops stale frames, One-Euro landmark
+- [x] **P1 — Latency and jitter.** Capture thread that drops stale frames, One-Euro landmark
       filter, deadband, snap cursor, direct `SetCursorPos`.
-- [ ] **P2 — Pose engine.** Joint-angle finger detection, scale-relative pinches, pose
+- [x] **P2 — Pose engine.** Joint-angle finger detection, scale-relative pinches, pose
       classification, handedness, yaw/pitch pointing vector.
-- [ ] **P3 — Aim.** Calibration wizard, angular nearest-centroid classifier with hysteresis,
+- [x] **P3 — Aim.** Calibration wizard, angular nearest-centroid classifier with hysteresis,
       heuristic fallback, HUD readout.
-- [ ] **P4 — Gestures.** The eleven gestures above with the conflict rules, as an explicit state
+- [x] **P4 — Gestures.** The eleven gestures above with the conflict rules, as an explicit state
       machine with a single active action.
-- [ ] **P5 — Actions.** Minimise/maximise/fullscreen (with YouTube detection), aimed-monitor
+- [x] **P5 — Actions.** Minimise/maximise/fullscreen (with YouTube detection), aimed-monitor
       window targeting, Alt-Tab held-key flow, tab swipes, adaptive scroll, drag, clicks,
       push-to-talk hold.
-- [ ] **P6 — HUD and safety.** Overlay (pose, aim, monitor, active action, fps, latency),
+- [x] **P6 — HUD and safety.** Overlay (pose, aim, monitor, active action, fps, latency),
       release-all failsafe, dry-run mode.
-- [ ] **P7 — Tests.** Deterministic landmark tests for every pose, every transition, the conflict
+- [x] **P7 — Tests.** Deterministic landmark tests for every pose, every transition, the conflict
       rules, the click/close arbitration, the monitor classifier and the filter. No camera needed.
-- [ ] **P8 — Docs.** README, this plan, launchers, kanban. Git init + commit. GitHub push
+- [x] **P8 — Docs.** README, this plan, launchers, kanban. Git init + commit. GitHub push
       deliberately left as an explicit request.
 
 ## 7. Verification
 
-Machine-verified (evidence in the final report): synthetic-landmark tests for all eleven gestures,
-aim classification against the real 4-monitor layout, key-release safety, latency report, live
-camera capture proving detection and fps.
+Machine-verified, with the evidence:
 
-Needs Joe's hands, and the plan does not pretend otherwise: how the gestures *feel*, pinch
-tightness at his desk distance, filter tuning, and the accuracy of his own aim calibration. The
-config exposes every threshold (`--tune`) precisely so those are numbers to adjust rather than
-things to reflavour by guess.
+| Claim | Evidence |
+|---|---|
+| gesture logic | **53/53** deterministic tests pass (`pytest tests -q`), driven by synthetic landmarks with exact joint angles — no camera involved |
+| rotation invariance | open hand still reads OPEN at 0/45/90/135/−90° of in-plane rotation (the specific thing upstream got wrong) |
+| click/flick arbitration | tests assert the close-flick emits **no** click, and that a pinch alone emits exactly one |
+| monitor aiming | the classifier is tested against this machine's real four-display layout (heuristic, calibrated, hysteresis, distance gate, reversed-axis handling) |
+| the OS layer works | `kinesis.py --check` passes: 4 monitors enumerated, virtual desktop 7680x1080, 4 real windows located by monitor, fullscreen detection correct against a live fullscreen overlay window, virtual-key map, camera opened |
+| it actually detects hands | live: 250/251 frames with a hand in view, a hand detected during the build (`Left(0.98)`), MediaPipe world landmarks feeding real yaw/pitch |
+| latency | 45–48 ms average end-to-end, 81–104 ms peak, measured over a 25 s live run |
+| no silent failure | the first build had the inference thread dying on a bad MediaPipe kwarg *silently*; that class of failure now raises loudly instead, which is how it was found |
+
+Needs Joe's hands, and this plan does not pretend otherwise:
+
+- how each gesture *feels* at his desk distance, and pinch tightness in particular;
+- his own aim calibration (`calibrate.bat`) — accuracy depends on his camera position and chair;
+- filter tuning: 1.6/0.05 is a starting point, `--tune` exists precisely so it becomes a number to
+  change rather than something to reflavour by guess;
+- whether the 2 s left-fist hold for Alt-Tab is the right duration in practice.
+
+### One requirement added mid-build
+
+The shaka pose (thumb **and** pinky out, index/middle/ring curled → hold `Ctrl+Space`, release on
+release) arrived after the initial brief and is implemented as gesture #11. It is deliberately
+disjoint from the fist (which requires the pinky curled), so push-to-talk can never minimise a
+window.
