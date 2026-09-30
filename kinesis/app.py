@@ -9,12 +9,13 @@ import cv2
 
 from . import winapi as w
 from . import tabs
+from . import focus_target
 from .actions import ActionRunner
 from .aim import AimClassifier
 from .config import Calibration, Config, load_calibration
 from .desktop_overlay import DesktopOverlay
 from .gaze import GazeEngine
-from .gestures import GazeScroller, GestureEngine
+from .gestures import GazeScroller, GestureEngine, Intent
 from .hud import Hud
 from .tracking import TrackingEngine
 from .vcam import VirtualCamera
@@ -63,6 +64,7 @@ class KinesisApp:
         self._gaze_dwell_hwnd = None
         self._gaze_dwell_since = 0.0
         self._gaze_focus_at = 0.0
+        self.last_ptt_focus = ""
         self.hud = Hud(cfg, self.monitors)
         self.preview = bool(cfg["preview"] if preview is None else preview)
         self._stop = False
@@ -138,6 +140,40 @@ class KinesisApp:
                 print(f"[gaze] calibrated with your eyes {stored['distance_mm']:.0f} mm from the "
                       f"screen; will warn past "
                       f"{float(self.cfg['distance_warn_fraction']) * 100:.0f}% drift")
+
+    def _prepare_ptt_focus(self, intents, gaze, now: float) -> None:
+        """Dictating while looking at a text field: click into the field first.
+
+        The gesture engine has no idea what is on screen, so the field is found here. Hit test the
+        gaze point; if it is somewhere you can type - or a page we cannot read, which is what a
+        browser looks like - park the pointer there, click, pause for the focus to take, then let the
+        Ctrl+Space the gesture emitted go out. Pure `focus_target.decide()` makes the call, so the
+        behaviour is testable without a desktop.
+        """
+        if gaze is None or not getattr(gaze, "valid", False):
+            return
+        mode = str(self.cfg["ptt_focus_mode"])
+        if mode == "off":
+            return
+        keys = tuple(self.cfg["ptt_keys"] or ())
+        where = None
+        for i, intent in enumerate(intents):
+            if intent.kind == "keys.down" and tuple(intent.keys or ()) == keys:
+                where = i
+                break
+        if where is None:
+            return
+        hit = focus_target.hit_test(int(gaze.x), int(gaze.y))
+        ok, why = focus_target.decide(mode, hit)
+        self.last_ptt_focus = f"{'click' if ok else 'no click'}: {why}"
+        if not ok:
+            return
+        settle = int(float(self.cfg["ptt_focus_settle_ms"]))
+        intents[where:where] = [
+            Intent("mouse.click", button="left", warp=(float(gaze.x), float(gaze.y)),
+                   note=f"dictation focus ({why})"),
+            Intent("pause", amount=settle, note="let the field take focus"),
+        ]
 
     def _annotate_gaze_click(self, intents, gaze, now: float) -> None:
         """Clicking while looking at a browser tab switches to that tab.
@@ -237,6 +273,8 @@ class KinesisApp:
         if self.gaze.enabled:
             self.gaze.start()
         self._build_geometry(w0, h0)     # after gaze.start: the model knows the calibrated seat distance
+        if focus_target.prewarm():
+            print("[focus] UI Automation ready (dictation clicks into the field you are looking at)")
         if self.gaze.enabled and not self.gaze.is_calibrated:
             print("[gaze] NOT CALIBRATED - eye tracking cannot pick the target window yet.")
             print("[gaze] run calibrate_gaze.bat once (~40 seconds of looking at dots), then start "
@@ -273,6 +311,7 @@ class KinesisApp:
                                               target_hwnd=target_hwnd)
                 intents.extend(self.gaze_scroller.update(gaze_state, now, dt))
                 self._annotate_gaze_click(intents, gaze_state, now)
+                self._prepare_ptt_focus(intents, gaze_state, now)
                 self._prev = now
                 if bool(self.cfg["exclusive"]):
                     intents = [i for i in intents if i.kind == "cursor.move"]

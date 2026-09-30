@@ -162,9 +162,12 @@ DEFAULTS: Dict[str, Any] = {
     "gaze_click_warp_delay_ms": 1.0,   # move the pointer to the gaze point, wait, then click
     "tab_strip_top_px": 6.0,           # logical px of drag region above the tabs (Chromium)
     "tab_strip_height_px": 40.0,       # logical height of the tab strip
+    # --- dictation focus: click into the field you are looking at before the dictation hotkey ---
+    "ptt_focus_mode": "auto",          # auto | uia | always | off  (auto clicks pages we cannot read)
+    "ptt_focus_settle_ms": 40.0,       # gap between clicking the field and Ctrl+Space going out
     # --- gaze focus: the window you look at becomes the focused window ---
     "gaze_focus_enabled": True,
-    "gaze_focus_dwell_s": 0.7,         # look at a window this long and it comes forward
+    "gaze_focus_dwell_s": 0.15,        # look at a window this long and it comes forward
     "gaze_focus_cooldown_s": 1.5,      # don't fight the user straight after focusing
     "gaze_focus_skip_fullscreen": True,
     # --- desktop overlay (click-through, over the whole desktop) ---

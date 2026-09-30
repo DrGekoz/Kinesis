@@ -5,6 +5,54 @@ All notable changes to Kinesis. The README stays compact on purpose: this is whe
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are
 [semantic](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] — dictate into the field you are looking at
+
+The dictation gesture now puts the caret where you are looking before it starts listening.
+
+### Added
+
+- **`ptt_focus_mode`** (`auto` | `uia` | `always` | `off`). When the shaka arms, the gaze point is hit
+  tested; if it is somewhere you can type, Kinesis inserts a click on that point and a
+  `ptt_focus_settle_ms` pause (40 ms) ahead of the `Ctrl+Space` the gesture already emitted. The
+  pointer is parked with the same warp the tab-click uses, so it is on the field 1 ms before the click.
+- **`kinesis/focus_target.py`** — hit testing with three sources of trust: UI Automation (definitive
+  for native controls), the window class under the point (Edit/RichEdit/Scintilla), and an explicit
+  "inconclusive" answer. `decide()` is pure and takes a plain `Hit`, so the whole policy is testable
+  without a desktop.
+- **`tools/check_focus.py`** — prints what the hit test sees, and what it would do, at the centre of
+  every monitor and over the taskbar. Nothing is clicked or moved.
+
+### What the live probing found
+
+- **Chromium does not expose editable nodes to UI Automation here.** Even minutes after a UIA client
+  exists, a browser window yields `Pane`/`Image` nodes and no `Document` or `Edit`. So the browser case
+  is *inconclusive*, and in `auto` an inconclusive web page counts as somewhere you meant to type —
+  that is what makes the feature work at all in Opera. `tools/check_focus.py` over Opera returned
+  `controlType=50006` (Image) at a point on the page, which the policy correctly refuses; over
+  Discord's `View` pane it clicks, which is right, because that is where you were looking.
+- **Native controls are exact**: a real Win32 EDIT reports `controlType 50004` and
+  `GetFocusedElement` agrees, which is the signal `uia` mode trusts.
+- **The desktop and the taskbar read as bare panes**, so they needed explicit exclusions or `auto`
+  would have clicked them. Caught by running the live check, not by a unit test.
+- **The cursor shape is not usable as a text-box detector across processes** — `GetCursorInfo`
+  returned handles that do not correspond to `LoadCursor` handles in another process, so that
+  approach was dropped rather than shipped half-working.
+
+### Changed
+
+- **`gaze_focus_dwell_s` 0.7 → 0.15 s.** Looking at a window focuses it far more responsively.
+
+### Verified
+
+- 158 tests: the policy across every mode and control type, buttons/links/images never clicked, an
+  already-focused field left alone (clicking it would move the caret), read-only fields refused, the
+  click + pause inserted immediately before the hotkey and nothing else touched, other hotkeys ignored,
+  uncalibrated gaze ignored, and the pause honouring its milliseconds while staying out of a dry run.
+- Live: UIA client ready in ~100 ms, hit tests 4–54 ms, desktop/taskbar refused, Opera page refused at
+  an image and clicked at a bare pane.
+
+---
+
 ## [1.4.0] — click the tab you are looking at
 
 Gaze stops being only a *target* and starts being an *input*: a click made while looking at a browser tab lands on that tab.

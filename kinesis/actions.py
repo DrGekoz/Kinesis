@@ -241,6 +241,13 @@ class ActionRunner:
             kind = intent.kind
             if kind == "cursor.move":
                 self._set_cursor(intent.x, intent.y)
+            elif kind == "pause":
+                # an explicit gap between two actions (e.g. let a field take focus before a hotkey)
+                ms = max(0, int(intent.amount or 0))
+                if ms:
+                    self._note(f"pause {ms} ms")
+                    if not self.dry:
+                        time.sleep(ms / 1000.0)
             elif kind == "mouse.click":
                 self._click(intent.button or "left", intent.warp)
             elif kind == "mouse.double":

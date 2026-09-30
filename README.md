@@ -6,14 +6,14 @@
 
 Control Windows with your hands through one webcam. Look at a window and it becomes the target; move your index finger and the cursor goes there. No keyboard, no mouse, no wearable.
 
-**11 gestures · gesture locking · desk geometry · multi-monitor · ~46 ms · gaze targeting · gaze tab clicks · desktop overlay · dictation · virtual camera · 143 tests**
+**11 gestures · gesture locking · desk geometry · multi-monitor · ~46 ms · gaze targeting · gaze tab clicks · desktop overlay · dictation into the field you look at · virtual camera · 158 tests**
 
 <a href="https://github.com/DrGekoz/Kinesis/stargazers"><img src="https://img.shields.io/github/stars/DrGekoz/Kinesis?style=for-the-badge&color=f59e0b" alt="Stars"></a>
 <a href="https://github.com/DrGekoz/Kinesis/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-MIT-22c55e?style=for-the-badge" alt="License"></a>
 <img src="https://img.shields.io/badge/platform-Windows-06b6d4?style=for-the-badge" alt="Platform">
 <img src="https://img.shields.io/badge/python-3.11-8b5cf6?style=for-the-badge" alt="Python">
 <img src="https://img.shields.io/badge/latency-~46ms-f43f5e?style=for-the-badge" alt="Latency">
-<img src="https://img.shields.io/badge/tests-143%20passing-22c55e?style=for-the-badge" alt="Tests">
+<img src="https://img.shields.io/badge/tests-158%20passing-22c55e?style=for-the-badge" alt="Tests">
 <img src="https://img.shields.io/badge/virtual%20camera-OBS-8b5cf6?style=for-the-badge" alt="Virtual camera">
 
 [Gestures](#gestures) · [Quick start](#quick-start) · [Install](#install) · [Calibration](#calibration) · [Gaze](#gaze) · [Overlay](#overlay) · [Dictation](#dictation) · [Config](#config) · [Troubleshooting](#troubleshooting) · [Credits](#credits)
@@ -89,8 +89,11 @@ git clone https://github.com/ck-zhang/eyetrax vendor/eyetrax
 python -m venv .venv
 .venv\Scripts\pip install mediapipe==0.10.20 opencv-contrib-python==4.10.0.84 numpy==1.26.4
 .venv\Scripts\pip install --no-deps -e vendor/eyetrax
-.venv\Scripts\pip install scikit-learn screeninfo pyvirtualcam
+.venv\Scripts\pip install scikit-learn screeninfo pyvirtualcam comtypes Pillow
 ```
+
+`comtypes` drives UI Automation, which is what recognises a text box before the dictation gesture
+clicks into it. Without it that check degrades to window classes and browsers stop being recognised.
 
 ## Calibration
 
@@ -108,7 +111,7 @@ Skip them and everything still works — gaze falls back to hand aim, then the f
 Eye tracking (via [EyeTrax](#credits)) decides **which window a gesture applies to**. Look at a
 window, gesture, and it lands there — no click-to-focus first.
 
-- **Gaze focus.** Dwell on a window for 0.7 s and it comes to the front, so the keyboard and typing
+- **Gaze focus.** Dwell on a window for 0.15 s and it comes to the front, so the keyboard and typing
   land there too. `gaze_focus_enabled: false` keeps gaze as a gesture target only.
 - **Tab switching.** Click while looking at a browser tab and Kinesis parks the pointer on that tab
   1 ms before the click goes out, so the click lands on the tab you were looking at rather than
@@ -151,6 +154,13 @@ Hold the thumb-and-pinky pose and talk. It holds `Ctrl+Space`, which is the Wind
 *transcribe* binding in [Handy](https://github.com/cjpais/Handy) — free, offline speech-to-text.
 Remapped it? Mirror it: `--tune ptt_keys=ctrl,alt,d --save-config`.
 
+**It clicks into the field you are looking at first.** Make the gesture while looking at a text box
+and Kinesis parks the pointer on that point, waits 1 ms, clicks to put the caret there, gives the
+field 40 ms to take focus, and only then sends `Ctrl+Space` — so the dictation lands where you were
+looking instead of wherever the last click left the caret. Buttons, links, images, the desktop and
+the taskbar are never clicked. `ptt_focus_mode`: `auto` (default) · `uia` (only when the field can be
+confirmed) · `always` · `off`.
+
 ## Latency
 
 | Metric | Measured |
@@ -184,7 +194,8 @@ Everything lives in `kinesis_config.json` and every key can be overridden live w
 | `alt_tab_hold_s` / `alt_tab_session_timeout_s` | 2.0 / 30.0 | Left-fist hold, and the Alt release safety |
 | `ptt_keys` | ctrl, space | The dictation hotkey the shaka holds |
 | `gaze_target_enabled` | true | Gaze picks the target window |
-| `gaze_focus_enabled` / `gaze_focus_dwell_s` | true / 0.7 | Looking at a window focuses it |
+| `gaze_focus_enabled` / `gaze_focus_dwell_s` | true / 0.15 | Looking at a window focuses it |
+| `ptt_focus_mode` / `ptt_focus_settle_ms` | auto / 40 | Click into the field you are looking at before dictating, and the focus settle |
 | `gaze_click_tabs` / `gaze_click_warp_delay_ms` | true / 1.0 | Clicking a tab you are looking at, and the pause after the pointer moves |
 | `tab_strip_top_px` / `tab_strip_height_px` | 6 / 40 | Where the tab strip is, in logical pixels from the client top |
 | `gaze_scroll_mode` / `gaze_scroll_speed` | edge / 480 | Gaze scrolling on/off and speed |
@@ -206,6 +217,7 @@ Everything lives in `kinesis_config.json` and every key can be overridden live w
 | Alt-Tab is not switching | Hold the left fist the full 2 s, then pinch index-to-thumb on the right hand |
 | Gestures act on the wrong window | `calibrate_gaze.bat`, check the hit rate; or `calibrate.bat` for aiming |
 | Clicking a tab does nothing | Gaze has to be calibrated — an invalid gaze point cannot be warp-targeted. `tools/check_tabs.py` confirms the strip is being found |
+| Dictation types into the wrong place | `tools/check_focus.py` shows what the hit test sees; `ptt_focus_mode=uia` only clicks fields it can confirm, `off` disables the click entirely |
 | Overlay does not appear | It needs gaze — an uncalibrated model draws nothing. INSERT toggles it |
 | Gaze picks the neighbouring screen | `--desk-report`: under ~8° between screens, sit further back or restrict `--monitors` |
 | Desk report has wrong sizes | That EDID had no size (says `estimate`) — set `monitor_mm_overrides` |
@@ -213,15 +225,16 @@ Everything lives in `kinesis_config.json` and every key can be overridden live w
 ## Verification
 
 ```bat
-.venv\Scripts\python -m pytest tests -q       143 passed
+.venv\Scripts\python -m pytest tests -q       158 passed
 .venv\Scripts\python tools\verify_actions.py  16/16 live OS checks
 .venv\Scripts\python tools\verify_overlay.py  12/12 against the real compositor
 .venv\Scripts\python tools\check_tabs.py      tab-strip detection against your open browsers
 .venv\Scripts\python tools\bench_overlay.py   per-style overlay cost
+.venv\Scripts\python tools\check_focus.py     text-box detection against your live desktop
 check.bat                                     all of the above, in order
 ```
 
-143 tests cover every gesture, the pose classifier, the click/flick arbitration, gesture locking, the
+158 tests cover every gesture, the pose classifier, the click/flick arbitration, gesture locking, the
 Alt-Tab session, gaze targeting and focus, desk geometry against a hand-built EDID block, overlay
 rendering, and release-all safety — with landmark geometry synthesised at exact joint angles rather
 than recorded, so each classification is checked against a known-correct input.
