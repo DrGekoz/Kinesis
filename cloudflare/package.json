@@ -1,0 +1,6 @@
+{
+  "name": "kinesis-gesture-maps-api",
+  "private": true,
+  "type": "module",
+  "description": "Kinesis Gesture-Map marketplace API (Cloudflare Worker + D1)"
+}

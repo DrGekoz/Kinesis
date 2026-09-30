@@ -1,0 +1,118 @@
+{
+  "schema": "kinesis.gesture-map",
+  "version": 1,
+  "name": "Video Editing",
+  "author": "Kinesis",
+  "description": "Scrub, cut and undo on the timeline. Peace plays, three fingers cuts.",
+  "created": "2026-10-01",
+  "bindings": [
+    {
+      "id": "play",
+      "enabled": true,
+      "gesture": {
+        "pose": "peace",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "space"
+        ]
+      }
+    },
+    {
+      "id": "step-back",
+      "enabled": true,
+      "gesture": {
+        "pose": "point",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "left"
+        ]
+      }
+    },
+    {
+      "id": "step-fwd",
+      "enabled": true,
+      "gesture": {
+        "pose": "pinky",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "right"
+        ]
+      }
+    },
+    {
+      "id": "cut",
+      "enabled": true,
+      "gesture": {
+        "pose": "three",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "k"
+        ],
+        "modifiers": [
+          "ctrl"
+        ]
+      }
+    },
+    {
+      "id": "undo",
+      "enabled": true,
+      "gesture": {
+        "pose": "four",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "z"
+        ],
+        "modifiers": [
+          "ctrl"
+        ]
+      }
+    },
+    {
+      "id": "marker",
+      "enabled": true,
+      "gesture": {
+        "pose": "pinch_pinky",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "m"
+        ]
+      }
+    },
+    {
+      "id": "redo",
+      "enabled": true,
+      "gesture": {
+        "left": "fist",
+        "right": "three"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "z"
+        ],
+        "modifiers": [
+          "ctrl",
+          "shift"
+        ]
+      }
+    }
+  ]
+}

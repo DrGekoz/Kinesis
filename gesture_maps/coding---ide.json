@@ -1,0 +1,132 @@
+{
+  "schema": "kinesis.gesture-map",
+  "version": 1,
+  "name": "Coding / IDE",
+  "author": "Kinesis",
+  "description": "Command palette, go-to-file, find references and the terminal. Built for VS Code, works in any JetBrains editor with the same habits.",
+  "created": "2026-10-01",
+  "bindings": [
+    {
+      "id": "command-palette",
+      "enabled": true,
+      "gesture": {
+        "pose": "peace",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "p"
+        ],
+        "modifiers": [
+          "ctrl",
+          "shift"
+        ]
+      }
+    },
+    {
+      "id": "go-to-file",
+      "enabled": true,
+      "gesture": {
+        "pose": "point",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "p"
+        ],
+        "modifiers": [
+          "ctrl"
+        ]
+      }
+    },
+    {
+      "id": "find-references",
+      "enabled": true,
+      "gesture": {
+        "pose": "three",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "f12"
+        ],
+        "modifiers": [
+          "shift"
+        ]
+      }
+    },
+    {
+      "id": "comment-line",
+      "enabled": true,
+      "gesture": {
+        "pose": "four",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "/"
+        ],
+        "modifiers": [
+          "ctrl"
+        ]
+      }
+    },
+    {
+      "id": "terminal",
+      "enabled": true,
+      "gesture": {
+        "pose": "pinky",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "`"
+        ],
+        "modifiers": [
+          "ctrl"
+        ]
+      }
+    },
+    {
+      "id": "git-panel",
+      "enabled": true,
+      "gesture": {
+        "pose": "pinch_pinky",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "g"
+        ],
+        "modifiers": [
+          "ctrl",
+          "shift"
+        ]
+      }
+    },
+    {
+      "id": "search-all",
+      "enabled": true,
+      "gesture": {
+        "left": "fist",
+        "right": "peace"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "f"
+        ],
+        "modifiers": [
+          "ctrl",
+          "shift"
+        ]
+      }
+    }
+  ]
+}

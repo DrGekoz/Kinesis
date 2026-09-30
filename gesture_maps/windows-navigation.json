@@ -1,0 +1,129 @@
+{
+  "schema": "kinesis.gesture-map",
+  "version": 1,
+  "name": "Windows Navigation",
+  "author": "Kinesis",
+  "description": "Snap windows, task view and show desktop. Three fingers for task view, pinch your little finger to drop back to the desktop.",
+  "created": "2026-10-01",
+  "bindings": [
+    {
+      "id": "task-view",
+      "enabled": true,
+      "gesture": {
+        "pose": "three",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "tab"
+        ],
+        "modifiers": [
+          "win"
+        ]
+      }
+    },
+    {
+      "id": "show-desktop",
+      "enabled": true,
+      "gesture": {
+        "pose": "four",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "d"
+        ],
+        "modifiers": [
+          "win"
+        ]
+      }
+    },
+    {
+      "id": "snap-left",
+      "enabled": true,
+      "gesture": {
+        "pose": "point",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "left"
+        ],
+        "modifiers": [
+          "win"
+        ]
+      }
+    },
+    {
+      "id": "snap-right",
+      "enabled": true,
+      "gesture": {
+        "pose": "peace",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "right"
+        ],
+        "modifiers": [
+          "win"
+        ]
+      }
+    },
+    {
+      "id": "maximise",
+      "enabled": true,
+      "gesture": {
+        "pose": "pinky",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "up"
+        ],
+        "modifiers": [
+          "win"
+        ]
+      }
+    },
+    {
+      "id": "restore",
+      "enabled": true,
+      "gesture": {
+        "pose": "pinch_pinky",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "down"
+        ],
+        "modifiers": [
+          "win"
+        ]
+      }
+    },
+    {
+      "id": "alt-tab",
+      "enabled": true,
+      "gesture": {
+        "left": "open",
+        "right": "fist"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "tab"
+        ],
+        "modifiers": [
+          "alt"
+        ]
+      }
+    }
+  ]
+}

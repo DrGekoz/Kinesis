@@ -1,0 +1,100 @@
+{
+  "schema": "kinesis.gesture-map",
+  "version": 1,
+  "name": "Meeting Controls",
+  "author": "Kinesis",
+  "description": "Mute, camera, raise hand and hang up, matching the Teams and Zoom shortcuts.",
+  "created": "2026-10-01",
+  "bindings": [
+    {
+      "id": "mute",
+      "enabled": true,
+      "gesture": {
+        "pose": "peace",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "m"
+        ],
+        "modifiers": [
+          "ctrl",
+          "shift"
+        ]
+      }
+    },
+    {
+      "id": "camera",
+      "enabled": true,
+      "gesture": {
+        "pose": "three",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "v"
+        ],
+        "modifiers": [
+          "ctrl",
+          "shift"
+        ]
+      }
+    },
+    {
+      "id": "raise-hand",
+      "enabled": true,
+      "gesture": {
+        "pose": "point",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "u"
+        ],
+        "modifiers": [
+          "ctrl",
+          "shift"
+        ]
+      }
+    },
+    {
+      "id": "hang-up",
+      "enabled": true,
+      "gesture": {
+        "pose": "four",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "h"
+        ],
+        "modifiers": [
+          "ctrl",
+          "shift"
+        ]
+      }
+    },
+    {
+      "id": "share-screen",
+      "enabled": true,
+      "gesture": {
+        "pose": "pinky",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "e"
+        ],
+        "modifiers": [
+          "ctrl",
+          "shift"
+        ]
+      }
+    }
+  ]
+}

@@ -125,6 +125,10 @@ DEFAULTS: Dict[str, Any] = {
     # --settings launch flag and is not meant to be saved.
     "settings_hotkey": "f2",
     "open_settings": False,
+    # Gesture-Maps: where the user's map is saved, and the marketplace endpoint (set by deploy.py)
+    "gesture_map_path": "",
+    "marketplace_api": "",
+    "map_confirm_frames": 2,
     "scale_reference": "eye_corners",  # eye_corners | ipd - the physical span used for distance
     "eye_corner_mm": 90.0,             # outer eye corner span; measure yours for better distance
     "ipd_mm": 63.0,

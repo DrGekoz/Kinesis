@@ -44,7 +44,9 @@ def main() -> int:
 
     t0 = time.perf_counter()
     labels = ms.labels_from_hardware(monitor_hardware(monitors), monitors)
+    from kinesis.gesture_map import load_active
     action = sw.run(cfg, monitors, theme=args.theme or None, labels=labels,
+                    gesture_map=load_active(cfg),
                     status="self-test: nothing was changed",
                     _auto_close_ms=int(args.seconds * 1000))
     elapsed = time.perf_counter() - t0

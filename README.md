@@ -13,7 +13,7 @@ Control Windows with your hands through one webcam. Look at a window and it beco
 <img src="https://img.shields.io/badge/platform-Windows-06b6d4?style=for-the-badge" alt="Platform">
 <img src="https://img.shields.io/badge/python-3.11-8b5cf6?style=for-the-badge" alt="Python">
 <img src="https://img.shields.io/badge/latency-~46ms-f43f5e?style=for-the-badge" alt="Latency">
-<img src="https://img.shields.io/badge/tests-248%20passing-22c55e?style=for-the-badge" alt="Tests">
+<img src="https://img.shields.io/badge/tests-267%20passing-22c55e?style=for-the-badge" alt="Tests">
 <img src="https://img.shields.io/badge/virtual%20camera-OBS-8b5cf6?style=for-the-badge" alt="Virtual camera">
 
 [Gestures](#gestures) · [Quick start](#quick-start) · [Install](#install) · [Which screens](#which-screens) · [Calibration](#calibration) · [Eyes as the pointer](#the-pointer-is-your-eyes) · [Gaze](#gaze) · [Settings](#settings) · [Overlay](#overlay) · [Dictation](#dictation) · [Config](#config) · [Troubleshooting](#troubleshooting) · [Credits](#credits)
@@ -310,6 +310,9 @@ Everything lives in `kinesis_config.json` and every key can be overridden live w
 | `tab_strip_top_px` / `tab_strip_height_px` | 6 / 40 | Where the tab strip is, in logical pixels from the client top |
 | `gaze_scroll_mode` / `gaze_scroll_speed` | edge / 480 | Gaze scrolling on/off and speed |
 | `enabled_monitors` / `monitors_configured` | [] / false | Which screens Kinesis uses, by device name (empty = all). Set by the first-run question or the settings window |
+| `gesture_map_path` | *(config folder)* | where your Gesture-Map (.json) is kept |
+| `marketplace_api` | *(unset)* | the Gesture-Map marketplace endpoint |
+| `cursor_source` | `gaze` | `gaze` or `hand` - what moves the pointer |
 | `settings_hotkey` | f2 | Opens the settings window while running; `none` disables it |
 | `cursor_source` | gaze | What moves the pointer: `gaze` or `hand` |
 | `cursor_fallback` | hand | Before calibration: `hand` still moves it, or `hold` freezes the pointer |
@@ -348,7 +351,7 @@ Everything lives in `kinesis_config.json` and every key can be overridden live w
 .venv\Scripts\python tools\verify_overlay.py  12/12 against the real compositor
 .venv\Scripts\python tools\check_tabs.py      tab-strip detection against your open browsers
 .venv\Scripts\python -u tools/check_gaze.py   live gaze pipeline: camera, face, features, model
-.venv\Scripts\python -u tools/check_settings_window.py   renders the settings window
+.venv\Scripts\python -u tools/check_settings_window.py, tools/build_gesture_maps.py   renders the settings window
 .venv\Scripts\python tools\bench_overlay.py   per-style overlay cost
 .venv\Scripts\python tools\check_focus.py     text-box detection against your live desktop
 check.bat                                     all of the above, in order
@@ -358,6 +361,36 @@ check.bat                                     all of the above, in order
 Alt-Tab session, gaze targeting and focus, desk geometry against a hand-built EDID block, overlay
 rendering, and release-all safety — with landmark geometry synthesised at exact joint angles rather
 than recorded, so each classification is checked against a known-correct input.
+
+## Gesture-Maps
+
+F2 -> **Gestures**. Every binding is one gesture -> one action, and the file is plain JSON so it can
+be exported, handed to someone else, or published.
+
+    + Add gesture        pick from the gestures the tracker can really see, then what it does
+    Edit                 change either half; keys are captured by pressing them, with CTRL / SHIFT /
+                         ALT / WIN as toggles
+    Import / Export      a .json in, a .json out - a bad file is refused with the reason, not a stack
+    Submit to Marketplace  publish it with a title, description, your name and GitHub link
+
+Gestures marked **(built in)** are the ones Kinesis already uses - click, right click, drag, push to
+talk, minimise, maximise. Binding one overrides the built in, and the editor says so. Everything
+else in the vocabulary is free: peace, three, four, pinky, a little-finger pinch, a point, and any
+two-hand pair.
+
+Actions are keys (with modifiers), a held key, a mouse click or a real button-hold drag, or a window
+command. There is deliberately **no** "run a program" and no "type text": a map imported from the
+marketplace cannot execute anything, which is the only reason sharing one is safe.
+
+Ten maps ship in `gesture_maps/`: Browser Power User, Media Player, Windows Navigation, Video
+Editing, Presentation Remote, Coding / IDE, One-Handed Essentials, Meeting Controls, Reading
+Comfort, and Gaming Hotbar.
+
+## Marketplace
+
+Gesture-Maps are shared through a Cloudflare Worker in front of a D1 database (`cloudflare/`), so the
+desktop app holds no credentials - it only calls a public endpoint. Browse and download from
+F2 -> **Marketplace**.
 
 ## Credits
 

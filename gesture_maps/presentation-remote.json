@@ -1,0 +1,94 @@
+{
+  "schema": "kinesis.gesture-map",
+  "version": 1,
+  "name": "Presentation Remote",
+  "author": "Kinesis",
+  "description": "Drive a slide deck from across the room. Peace advances, a point goes back, pinch your little finger to black the screen.",
+  "created": "2026-10-01",
+  "bindings": [
+    {
+      "id": "next-slide",
+      "enabled": true,
+      "gesture": {
+        "pose": "peace",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "right"
+        ]
+      }
+    },
+    {
+      "id": "prev-slide",
+      "enabled": true,
+      "gesture": {
+        "pose": "point",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "left"
+        ]
+      }
+    },
+    {
+      "id": "start-show",
+      "enabled": true,
+      "gesture": {
+        "pose": "three",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "f5"
+        ]
+      }
+    },
+    {
+      "id": "black-screen",
+      "enabled": true,
+      "gesture": {
+        "pose": "pinch_pinky",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "b"
+        ]
+      }
+    },
+    {
+      "id": "end-show",
+      "enabled": true,
+      "gesture": {
+        "pose": "pinky",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "esc"
+        ]
+      }
+    },
+    {
+      "id": "toggle-black",
+      "enabled": true,
+      "gesture": {
+        "pose": "four",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "b"
+        ]
+      }
+    }
+  ]
+}

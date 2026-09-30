@@ -1,0 +1,104 @@
+{
+  "schema": "kinesis.gesture-map",
+  "version": 1,
+  "name": "One-Handed Essentials",
+  "author": "Kinesis",
+  "description": "The whole set on your right hand only, for when the other hand is busy, holding something, or out of action.",
+  "created": "2026-10-01",
+  "bindings": [
+    {
+      "id": "confirm",
+      "enabled": true,
+      "gesture": {
+        "pose": "point",
+        "hand": "right"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "enter"
+        ]
+      }
+    },
+    {
+      "id": "next-field",
+      "enabled": true,
+      "gesture": {
+        "pose": "peace",
+        "hand": "right"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "tab"
+        ]
+      }
+    },
+    {
+      "id": "cancel",
+      "enabled": true,
+      "gesture": {
+        "pose": "three",
+        "hand": "right"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "esc"
+        ]
+      }
+    },
+    {
+      "id": "switch-app",
+      "enabled": true,
+      "gesture": {
+        "pose": "four",
+        "hand": "right"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "tab"
+        ],
+        "modifiers": [
+          "alt"
+        ]
+      }
+    },
+    {
+      "id": "undo",
+      "enabled": true,
+      "gesture": {
+        "pose": "pinky",
+        "hand": "right"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "z"
+        ],
+        "modifiers": [
+          "ctrl"
+        ]
+      }
+    },
+    {
+      "id": "reopen",
+      "enabled": true,
+      "gesture": {
+        "pose": "pinch_pinky",
+        "hand": "right"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "t"
+        ],
+        "modifiers": [
+          "ctrl",
+          "shift"
+        ]
+      }
+    }
+  ]
+}

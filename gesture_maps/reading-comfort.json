@@ -1,0 +1,120 @@
+{
+  "schema": "kinesis.gesture-map",
+  "version": 1,
+  "name": "Reading Comfort",
+  "author": "Kinesis",
+  "description": "Page through and resize long articles without touching the keyboard. Three fingers zooms in, four zooms out.",
+  "created": "2026-10-01",
+  "bindings": [
+    {
+      "id": "page-down",
+      "enabled": true,
+      "gesture": {
+        "pose": "peace",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "pagedown"
+        ]
+      }
+    },
+    {
+      "id": "page-up",
+      "enabled": true,
+      "gesture": {
+        "pose": "point",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "pageup"
+        ]
+      }
+    },
+    {
+      "id": "zoom-in",
+      "enabled": true,
+      "gesture": {
+        "pose": "three",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "+"
+        ],
+        "modifiers": [
+          "ctrl"
+        ]
+      }
+    },
+    {
+      "id": "zoom-out",
+      "enabled": true,
+      "gesture": {
+        "pose": "four",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "-"
+        ],
+        "modifiers": [
+          "ctrl"
+        ]
+      }
+    },
+    {
+      "id": "zoom-reset",
+      "enabled": true,
+      "gesture": {
+        "pose": "pinky",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "0"
+        ],
+        "modifiers": [
+          "ctrl"
+        ]
+      }
+    },
+    {
+      "id": "bookmark",
+      "enabled": true,
+      "gesture": {
+        "pose": "pinch_pinky",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "d"
+        ],
+        "modifiers": [
+          "ctrl"
+        ]
+      }
+    },
+    {
+      "id": "top-of-page",
+      "enabled": true,
+      "gesture": {
+        "left": "fist",
+        "right": "four"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "home"
+        ]
+      }
+    }
+  ]
+}

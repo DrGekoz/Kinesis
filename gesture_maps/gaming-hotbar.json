@@ -1,0 +1,108 @@
+{
+  "schema": "kinesis.gesture-map",
+  "version": 1,
+  "name": "Gaming Hotbar",
+  "author": "Kinesis",
+  "description": "Slots one to five on your fingers, map and inventory on the extra gestures. Keyboard-only games; anything with an anti-cheat will ignore injected input.",
+  "created": "2026-10-01",
+  "bindings": [
+    {
+      "id": "slot-1",
+      "enabled": true,
+      "gesture": {
+        "pose": "peace",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "1"
+        ]
+      }
+    },
+    {
+      "id": "slot-2",
+      "enabled": true,
+      "gesture": {
+        "pose": "three",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "2"
+        ]
+      }
+    },
+    {
+      "id": "slot-3",
+      "enabled": true,
+      "gesture": {
+        "pose": "four",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "3"
+        ]
+      }
+    },
+    {
+      "id": "slot-4",
+      "enabled": true,
+      "gesture": {
+        "pose": "pinky",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "4"
+        ]
+      }
+    },
+    {
+      "id": "slot-5",
+      "enabled": true,
+      "gesture": {
+        "pose": "point",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "5"
+        ]
+      }
+    },
+    {
+      "id": "map",
+      "enabled": true,
+      "gesture": {
+        "pose": "pinch_pinky",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "tab"
+        ]
+      }
+    },
+    {
+      "id": "inventory",
+      "enabled": true,
+      "gesture": {
+        "left": "fist",
+        "right": "pinky"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "m"
+        ]
+      }
+    }
+  ]
+}

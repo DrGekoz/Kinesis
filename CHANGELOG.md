@@ -5,6 +5,54 @@ All notable changes to Kinesis. The README stays compact on purpose: this is whe
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are
 [semantic](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.0] — Gesture-Maps, a marketplace, and the pointer follows your eyes
+
+### The pointer is driven by gaze
+
+`cursor_source` defaults to `gaze`, and `kinesis/gestures.py` has one place that decides where the
+pointer goes. The hand no longer moves it at all: `_cursor_intent` returns nothing while the eyes are
+driving, and the finger-pointing path is gone. `cursor_fallback=hand` keeps the mouse alive before the
+first calibration, so the app is never unusable - it prints which one is in charge at startup.
+
+### Gesture-Maps (`kinesis/gesture_map.py`)
+
+A map is JSON: gesture -> action, validated against the vocabulary MediaPipe actually gives us
+(pose, per-finger pinch, per-finger extended, handedness, one or two hands). Over 60 validation
+cases worth of rules, including whether a key can actually be pressed - a marketplace file saying
+`"banana"` is refused with "Kinesis cannot press 'banana'", not a crash at 2am.
+
+A map that binds a built-in gesture **owns** it and the built-in stands down, which is what makes
+rebinding the drag possible. The shipped maps never claim `shaka` (push to talk) and a test enforces
+that.
+
+Action types: keys, held keys, mouse, mouse-hold (a real drag), window commands, nothing. There is
+no way to run a program or type text, so an imported file cannot execute anything.
+
+### The settings window became a tabbed window
+
+Screens | Gestures | Marketplace, same hand-drawn Tk style, same palette and fonts. Edit a binding,
+add or remove one, import/export a map, submit it to the marketplace, or download someone else's.
+
+### Ten shipped maps
+
+Browser Power User, Media Player, Windows Navigation, Video Editing, Presentation Remote,
+Coding / IDE, One-Handed Essentials, Meeting Controls, Reading Comfort, Gaming Hotbar - built by
+`tools/build_gesture_maps.py` and validated at build time, so a map that cannot be imported cannot
+ship.
+
+### Fixed
+
+- **`cfg["key"] = value` does not exist** - `Config` has no `__setitem__`. Seven places used it,
+  including the first-run screen prompt and the settings Save button, so both would have raised
+  TypeError the first time anyone used them. A source-consistency test now fails the build if the
+  pattern comes back.
+- The shipped default map was invalid: the drag binding held no keys. Drag is now a real
+  `mouse_hold` action.
+- `calibrate.py` had no argument parsing at all; it now takes `--monitors` so aiming can be
+  recalibrated for the enabled screens only.
+- `c` and the punctuation the maps need were missing from the virtual-key table (`/`, `` ` ``,
+  `win`, brackets, and friends) - `ctrl+/` and `ctrl+\`` could not be pressed.
+
 ## [1.11.0] — the mouse pointer follows your eye gaze
 
 ### Changed

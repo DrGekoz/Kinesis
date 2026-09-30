@@ -13,6 +13,7 @@ import cv2
 from . import winapi as w
 from . import tabs
 from . import monitor_set
+from . import gesture_map
 from . import focus_target
 from .actions import ActionRunner
 from .aim import AimClassifier
@@ -112,6 +113,10 @@ class KinesisApp:
         self.aim = AimClassifier(cfg, self.monitors, self.calibration)
         self.engine = TrackingEngine(cfg)
         self.gestures = GestureEngine(cfg)
+        # the user's Gesture-Map (their bindings) - loaded before the loop starts so the very first
+        # gesture already obeys it
+        self.gesture_map = gesture_map.load_active(cfg)
+        self.gestures.load_map(self.gesture_map)
         self.runner = ActionRunner(cfg, self.monitors,
                                   dry=cfg["dry_run"] if dry is None else dry)
         self.gaze = GazeEngine(cfg)
@@ -500,6 +505,21 @@ class KinesisApp:
             print(f"[settings] unknown settings hotkey {name!r} - use run.bat --settings instead")
             return 0
 
+    def apply_gesture_map(self, gmap) -> None:
+        """Save the map and hand it to the engine, so the next gesture uses the new binding."""
+        self.gesture_map = gmap
+        try:
+            path = gesture_map.active_map_path(self.cfg)
+            gmap.save(path)
+            print(f"[map] saved {len(gmap.bindings)} bindings to {path}")
+        except Exception as exc:
+            print(f"[map] could not save the map: {exc}")
+        self.gestures.load_map(gmap)
+        owns = sorted({b.gesture.posed for b in gmap.bindings
+                       if b.enabled and b.gesture.posed and not b.gesture.two_hand})
+        print(f"[map] running {gmap.name}: {len(gmap.bindings)} bindings"
+              + (f"; overriding built-ins for {', '.join(owns)}" if owns else ""))
+
     @staticmethod
     def _monitor_labels(monitors) -> dict:
         """EDID model names, so screens are named rather than numbered DISPLAY14 etc."""
@@ -561,7 +581,9 @@ class KinesisApp:
             monitors = w.enumerate_monitors()
             action = settings_window.run(self.cfg, monitors,
                                          theme=self.cfg.get("vcam_theme", "ember"),
-                                         labels=self._monitor_labels(monitors))
+                                         labels=self._monitor_labels(monitors),
+                                         gesture_map=self.gesture_map,
+                                         on_map=self.apply_gesture_map)
         except Exception as exc:                       # pragma: no cover - GUI failure
             print(f"[settings] window failed: {exc}")
         if action == "saved":

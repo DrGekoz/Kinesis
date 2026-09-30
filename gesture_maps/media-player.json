@@ -1,0 +1,108 @@
+{
+  "schema": "kinesis.gesture-map",
+  "version": 1,
+  "name": "Media Player",
+  "author": "Kinesis",
+  "description": "Play, seek, volume and mute for YouTube, Spotify or VLC. Works anywhere a space bar does.",
+  "created": "2026-10-01",
+  "bindings": [
+    {
+      "id": "play-pause",
+      "enabled": true,
+      "gesture": {
+        "pose": "peace",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "space"
+        ]
+      }
+    },
+    {
+      "id": "seek-forward",
+      "enabled": true,
+      "gesture": {
+        "pose": "pinky",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "right"
+        ]
+      }
+    },
+    {
+      "id": "seek-back",
+      "enabled": true,
+      "gesture": {
+        "pose": "point",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "left"
+        ]
+      }
+    },
+    {
+      "id": "volume-up",
+      "enabled": true,
+      "gesture": {
+        "pose": "three",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "up"
+        ]
+      }
+    },
+    {
+      "id": "volume-down",
+      "enabled": true,
+      "gesture": {
+        "pose": "four",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "down"
+        ]
+      }
+    },
+    {
+      "id": "mute",
+      "enabled": true,
+      "gesture": {
+        "pose": "pinch_pinky",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "m"
+        ]
+      }
+    },
+    {
+      "id": "fullscreen",
+      "enabled": true,
+      "gesture": {
+        "left": "fist",
+        "right": "peace"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "f"
+        ]
+      }
+    }
+  ]
+}

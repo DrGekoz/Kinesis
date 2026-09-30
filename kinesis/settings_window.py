@@ -157,9 +157,47 @@ class _PillButton:
         c.tag_raise("all")
 
 
+class _Tab:
+    """One tab in the strip. Filled means it is the page on show."""
+
+    def __init__(self, parent, text: str, accent: tuple, command: Callable[[], None]):
+        self.text, self.accent, self.command = text, accent, command
+        self._filled = False
+        self.canvas = tk.Canvas(parent, width=136, height=34, bg=BG, highlightthickness=0, bd=0,
+                                cursor="hand2")
+        self.canvas.bind("<Button-1>", lambda _e: self.command())
+        self._paint()
+
+    def set_filled(self, filled: bool) -> None:
+        self._filled = bool(filled)
+        self._paint()
+
+    def _paint(self) -> None:
+        canvas = self.canvas
+        canvas.delete("all")
+        _round_rect(canvas, 1, 1, 135, 33, 11,
+                    fill=self.accent[1] if self._filled else PANEL_HI,
+                    outline=self.accent[1] if self._filled else BORDER)
+        canvas.create_text(68, 17, text=self.text, font=_font(11, "bold"),
+                           fill="#0e0f13" if self._filled else TEXT)
+
+
+class _TabBar(tk.Frame):
+    """The tab strip: same rounded shapes and palette as everything else in here."""
+
+    def __init__(self, parent, names: Sequence[str], accent: tuple, on_select: Callable[[str], None]):
+        super().__init__(parent, bg=BG)
+        self.buttons = []
+        for name in names:
+            button = _Tab(self, name, accent, (lambda n=name: on_select(n)))
+            button.canvas.pack(side="left", padx=(0, 8))
+            self.buttons.append(button)
+
+
 # ---------------------------------------------------------------- the window
 def run(cfg, monitors: Sequence, theme: Optional[str] = None,
         status: str = "", labels: Optional[dict] = None,
+        gesture_map=None, on_map: Optional[Callable] = None,
         _auto_close_ms: int = 0) -> Optional[str]:
     """Show the window. Returns 'saved', 'gaze', 'aim', or None when closed.
 
@@ -199,9 +237,28 @@ def run(cfg, monitors: Sequence, theme: Optional[str] = None,
     note.create_text(30, 30, anchor="w", fill=MUTED, font=_font(10),
                      text="Windows places somewhere else than it really is should be switched off.")
 
+    # ---------------- tabs
+    tabs_holder = tk.Frame(root, bg=BG)
+    tabs_holder.pack(fill="both", expand=True, padx=18, pady=(0, 0))
+    pages: Dict[str, tk.Frame] = {}
+
+    def show_tab(name: str):
+        for key, page in pages.items():
+            if key == name:
+                page.pack(fill="both", expand=True)
+            else:
+                page.pack_forget()
+        for i, button in enumerate(tabstrip.buttons):
+            button.set_filled(i == list(pages).index(name))
+
+    tabstrip = _TabBar(root, ["Screens", "Gestures", "Marketplace"], accent, show_tab)
+    tabstrip.pack(fill="x", padx=30, pady=(0, 10))
+    for name in ("Screens", "Gestures", "Marketplace"):
+        pages[name] = tk.Frame(tabs_holder, bg=BG)
+
     # ---------------- monitor rows
-    body = tk.Frame(root, bg=BG)
-    body.pack(fill="both", expand=True, padx=18, pady=(4, 0))
+    body = tk.Frame(pages["Screens"], bg=BG)
+    body.pack(fill="both", expand=True, padx=12, pady=(4, 0))
     switches: List[tuple] = []
 
     def refresh_footer():
@@ -232,7 +289,7 @@ def run(cfg, monitors: Sequence, theme: Optional[str] = None,
         sw.canvas.pack(side="right")
         switches.append((device, sw))
 
-    # ---------------- footer
+    # ---------------- gesture maps and the marketplace, when the app handed us a map
     foot = tk.Frame(root, bg=BG)
     foot.pack(fill="x", padx=30, pady=(10, 0))
     status_lbl = tk.Label(foot, text=summary(monitors, state["devices"]), bg=BG, fg=accent[0],
@@ -240,6 +297,25 @@ def run(cfg, monitors: Sequence, theme: Optional[str] = None,
     status_lbl.pack(anchor="w")
     if status:
         tk.Label(foot, text=status, bg=BG, fg=MUTED, font=_font(10), anchor="w").pack(anchor="w")
+
+    if gesture_map is not None:
+        from .gesture_ui import gestures_tab
+        from .marketplace import marketplace_tab
+
+        def adopt(new_map):
+            gesture_map.bindings = list(new_map.bindings)
+            gesture_map.name, gesture_map.author = new_map.name, new_map.author
+            gesture_map.description = new_map.description
+            if on_map is not None:
+                on_map(gesture_map)
+
+        gestures_tab(pages["Gestures"], cfg, accent, lambda: gesture_map, adopt, status_lbl)
+        marketplace_tab(pages["Marketplace"], cfg, accent,
+                        lambda downloaded, slug_: (adopt(downloaded),
+                                                   status_lbl.configure(text=f"downloaded {slug_}")),
+                        status_lbl)
+
+    show_tab("Screens")
 
     buttons = tk.Frame(root, bg=BG)
     buttons.pack(fill="x", padx=30, pady=16)
@@ -249,6 +325,8 @@ def run(cfg, monitors: Sequence, theme: Optional[str] = None,
             state["devices"] = [d for d, sw in switches if sw.on]
             cfg.set("enabled_monitors", normalise(state["devices"], monitors))
             cfg.set("monitors_configured", True)
+            if on_map is not None and gesture_map is not None:
+                on_map(gesture_map)          # persists the map and hands it to the engine
             cfg.save()
         result["action"] = kind
         root.destroy()

@@ -1,0 +1,150 @@
+{
+  "schema": "kinesis.gesture-map",
+  "version": 1,
+  "name": "Browser Power User",
+  "author": "Kinesis",
+  "description": "Tabs, pages and search without leaving the page you are reading. Peace sign is a new tab, three fingers closes one.",
+  "created": "2026-10-01",
+  "bindings": [
+    {
+      "id": "new-tab",
+      "enabled": true,
+      "gesture": {
+        "pose": "peace",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "t"
+        ],
+        "modifiers": [
+          "ctrl"
+        ]
+      }
+    },
+    {
+      "id": "close-tab",
+      "enabled": true,
+      "gesture": {
+        "pose": "three",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "w"
+        ],
+        "modifiers": [
+          "ctrl"
+        ]
+      }
+    },
+    {
+      "id": "reopen-tab",
+      "enabled": true,
+      "gesture": {
+        "pose": "four",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "t"
+        ],
+        "modifiers": [
+          "ctrl",
+          "shift"
+        ]
+      }
+    },
+    {
+      "id": "next-tab",
+      "enabled": true,
+      "gesture": {
+        "pose": "pinky",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "tab"
+        ],
+        "modifiers": [
+          "ctrl"
+        ]
+      }
+    },
+    {
+      "id": "prev-tab",
+      "enabled": true,
+      "gesture": {
+        "pose": "pinch_pinky",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "tab"
+        ],
+        "modifiers": [
+          "ctrl",
+          "shift"
+        ]
+      }
+    },
+    {
+      "id": "address-bar",
+      "enabled": true,
+      "gesture": {
+        "pose": "point",
+        "hand": "either"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "l"
+        ],
+        "modifiers": [
+          "ctrl"
+        ]
+      }
+    },
+    {
+      "id": "new-window",
+      "enabled": true,
+      "gesture": {
+        "left": "open",
+        "right": "peace"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "n"
+        ],
+        "modifiers": [
+          "ctrl",
+          "shift"
+        ]
+      }
+    },
+    {
+      "id": "reopen-last",
+      "enabled": true,
+      "gesture": {
+        "left": "fist",
+        "right": "point"
+      },
+      "action": {
+        "type": "keys",
+        "keys": [
+          "tab"
+        ],
+        "modifiers": [
+          "ctrl",
+          "shift"
+        ]
+      }
+    }
+  ]
+}

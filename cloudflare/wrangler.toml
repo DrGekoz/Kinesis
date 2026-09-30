@@ -1,0 +1,10 @@
+name = "kinesis-gesture-maps-api"
+main = "worker.js"
+compatibility_date = "2026-09-01"
+
+# The database id is filled in by cloudflare/deploy.py (it reads D1_DATABASE_ID from ../.env, or
+# looks the database up by name). Everything else here is fixed.
+[[d1_databases]]
+binding = "DB"
+database_name = "kinesis-gesture-maps"
+database_id = "REPLACE_WITH_DATABASE_ID"

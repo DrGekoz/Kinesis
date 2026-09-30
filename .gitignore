@@ -21,3 +21,5 @@ vendor/*
 *.log
 *.npz
 gaze_model.*
+.env
+.env.*

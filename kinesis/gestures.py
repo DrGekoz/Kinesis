@@ -64,6 +64,10 @@ class GestureEngine:
         self.active: Optional[str] = None          # scroll | drag | swipe
         self.lock: Optional[str] = None            # the gesture that owns the hand right now
         self._drag_source: Optional[str] = None
+        # Gesture-Maps: the user's own bindings, loaded from JSON (see kinesis/gesture_map.py)
+        self.map = None
+        self._map_held: Dict[str, bool] = {}
+        self._map_confirm: Dict[str, int] = {}
         # The pointer comes from the eyes now. The app turns this on only when gaze cannot drive it
         # (no calibration, or looking away) so the mouse is never left dead.
         self.cursor_from_hand = False
@@ -431,11 +435,16 @@ class GestureEngine:
         else:
             self._swipe_samples.clear()
 
+        # ---------------- the user's gesture map ----------------
+        out.extend(self._map_intents(primary, self._other_hand(primary, left_hand), now,
+                                     target_hwnd))
+
         # ---------------- clicks ----------------
         # both hands pinching index is the zoom, so it cannot also be a click
         both_index = (left_hand is not None and left_hand is not primary
                       and bool(pinches.get("index")) and bool(left_hand.pinches.get("index")))
-        if (not fist_conf and self.active is None and not self.ptt_held and not both_index
+        if (not self.map_owns("pinch_index") and not self.map_owns("pinch_middle")
+                and not fist_conf and self.active is None and not self.ptt_held and not both_index
                 and self.lock in (None, "click")):
             out.extend(self._click_logic(primary, now))
             if self._pending_click is not None and self.lock is None:
@@ -453,6 +462,60 @@ class GestureEngine:
         return out
 
     # ------------------------------------------------------------------ pieces
+    # ------------------------------------------------------------------ gesture maps
+    def load_map(self, gmap) -> None:
+        """Use a Gesture-Map (or None for built-ins only). Called at startup and after an import."""
+        self.map = gmap
+        self._map_held = {}
+        self._map_confirm = {}
+
+    def map_owns(self, pose: str) -> bool:
+        return bool(self.map is not None and self.map.owns(pose))
+
+    def _map_intents(self, left, right, now: float, target_hwnd) -> List[Intent]:
+        """Fire the user's bindings.
+
+        Tap actions fire on a confirmed rising edge; hold actions press on the way in and release on
+        the way out. Nothing here can fire while the built-in engine owns the hand, so an imported
+        map cannot fight a drag that is already in progress.
+        """
+        out: List[Intent] = []
+        if self.map is None or self.active is not None:
+            return out
+        frames = max(int(self.cfg.get("map_confirm_frames", 2)), 1)
+        matching = {b.id: b for b in self.map.matching(left, right)}
+        for bid, held in list(self._map_held.items()):
+            binding = next((b for b in self.map.bindings if b.id == bid), None)
+            if binding is None or bid not in matching:
+                if binding is not None and held:
+                    if binding.action.kind == "hold_keys":
+                        out.append(Intent("keys.up", keys=binding.action.combo,
+                                          focus_hwnd=target_hwnd))
+                    elif binding.action.kind == "mouse_hold":
+                        button = binding.action.button if binding.action.button in (
+                            "left", "right", "middle") else "left"
+                        out.append(Intent("mouse.up", button=button, target_hwnd=target_hwnd))
+                self._map_held[bid] = False
+                self._map_confirm[bid] = 0
+        for bid, binding in matching.items():
+            self._map_confirm[bid] = self._map_confirm.get(bid, 0) + 1
+            if self._map_confirm[bid] < frames:
+                continue
+            rising = not self._map_held.get(bid, False)
+            self._map_held[bid] = True
+            if binding.action.kind == "hold_keys":
+                if rising:
+                    out.append(Intent("keys.down", keys=binding.action.combo,
+                                      focus_hwnd=target_hwnd))
+                continue
+            if binding.action.kind == "mouse_hold":
+                if rising:
+                    out.extend(map_action_intents(binding.action, target_hwnd, note=binding.id))
+                continue
+            if rising:
+                out.extend(map_action_intents(binding.action, target_hwnd, note=binding.id))
+        return out
+
     def _cursor_intent(self, primary: HandPose) -> List[Intent]:
         if not self.cursor_from_hand:
             return []                    # the pointer follows the eyes; see KinesisApp._gaze_cursor
@@ -815,6 +878,44 @@ class GestureEngine:
         if self.ptt_held:
             bits.append("ptt")
         return ",".join(bits) if bits else "idle"
+
+
+def map_action_intents(action, target_hwnd, note: str = "") -> List["Intent"]:
+    """Turn one Gesture-Map action into the intents the runner already knows how to perform.
+
+    Only the action types listed in gesture_map.ACTION_TYPES reach here, so a map imported from
+    anywhere can press keys, click, or minimise a window - and nothing else. It cannot run a command.
+    """
+    from .gesture_map import SYSTEM_ACTIONS                     # noqa: F401 (documentation value)
+    kind = action.kind
+    if kind == "keys":
+        return [Intent("keys.tap", keys=action.combo, focus_hwnd=target_hwnd, note=note)]
+    if kind == "mouse":
+        button = action.button
+        if button in ("left", "right", "middle"):
+            return [Intent("mouse.click", button=button, target_hwnd=target_hwnd, note=note)]
+        if button == "double":
+            return [Intent("mouse.double", button="left", target_hwnd=target_hwnd, note=note)]
+        if button == "wheel_up":
+            return [Intent("mouse.wheel", amount=1, target_hwnd=target_hwnd, note=note)]
+        if button == "wheel_down":
+            return [Intent("mouse.wheel", amount=-1, target_hwnd=target_hwnd, note=note)]
+        return []
+    if kind == "mouse_hold":
+        # a real drag: the button goes down while the gesture is held and up when it is released
+        button = action.button if action.button in ("left", "right", "middle") else "left"
+        return [Intent("mouse.down", button=button, target_hwnd=target_hwnd, note=note)]
+    if kind == "system":
+        value = action.value
+        if value == "minimise":
+            return [Intent("window.minimise", target_hwnd=target_hwnd, note=note)]
+        if value == "maximise":
+            return [Intent("window.maximise", target_hwnd=target_hwnd, note=note)]
+        combos = {"fullscreen": ("f11",), "alt_tab": ("alt", "tab"),
+                  "ctrl_tab_next": ("ctrl", "tab"), "ctrl_tab_prev": ("ctrl", "shift", "tab")}
+        if value in combos:
+            return [Intent("keys.tap", keys=combos[value], focus_hwnd=target_hwnd, note=note)]
+    return []
 
 
 class GazeScroller:
