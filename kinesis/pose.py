@@ -82,6 +82,19 @@ class HandPose:
     yaw_2d: float = 0.0
     confidence: float = 1.0
 
+    def pinch_point_px(self, finger: str = "index") -> Tuple[float, float]:
+        """The midpoint between the thumb tip and a finger tip, in pixels.
+
+        This is the point a pinch actually happens at, which is what a two-hand pinch-zoom should
+        measure between: the hands' centres of mass move when they rotate, the pinch points do not.
+        """
+        if not self.points_px:
+            return self.index_tip_px
+        finger_tip = FINGER_JOINTS.get(finger, FINGER_JOINTS["index"])[2]
+        thumb = self.points_px[THUMB_TIP]
+        tip = self.points_px[finger_tip]
+        return ((thumb[0] + tip[0]) / 2.0, (thumb[1] + tip[1]) / 2.0)
+
     @property
     def num_extended(self) -> int:
         return sum(1 for f in LONG_FINGERS if self.extended.get(f))

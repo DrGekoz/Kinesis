@@ -5,6 +5,42 @@ All notable changes to Kinesis. The README stays compact on purpose: this is whe
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are
 [semantic](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0] — two-hand pinch zoom
+
+Both hands pinch index+thumb at once, then move apart to zoom in and together to zoom out.
+
+### Added
+
+- **`Ctrl+=` / `Ctrl+-` from a two-hand pinch.** The distance between the two hands' *pinch points*
+  (thumb tip and index tip, averaged) is what gets measured, not their centres of mass — centres
+  drift when the hands rotate, pinch points do not. Travel is accumulated and spent in steps
+  (`zoom_step_px`, 22 px), so a small move is a small zoom and a big sweep is a big one, at a rate
+  the hand controls rather than a timer. Capped at `zoom_max_steps_per_frame` so a fast sweep cannot
+  flood the key queue.
+- The zoom takes the gesture lock and suppresses the click outright: both index pinches are the zoom,
+  so neither of them is a click while it runs. A pending click is cancelled when a zoom starts.
+- `zoom_pinch_enabled`, `zoom_keys_in`, `zoom_keys_out`, `zoom_step_px`, `zoom_deadband_px`,
+  `zoom_max_steps_per_frame`, `zoom_confirm_frames`, `zoom_session_timeout_s`.
+
+### Three bugs found by running it rather than by reading it
+
+1. **The zoom could never start.** The confirm counter accumulated correctly, then the `else` branch
+   reset it *after every failed confirm* — so it was wiped each frame and never reached two. The
+   reset now only happens when the pose genuinely is not a two-hand pinch.
+2. **The zoom ran on one hand.** `_select_hands` returns the *same hand* for both roles when only one
+   is in frame, so a single pinching hand satisfied "both hands pinching" and kept zooming out on a
+   phantom 200 px span. Same trap that broke the close-flick in v1.6.0; `_other_hand()` fixes it.
+3. **A regression I caught mid-edit:** a patch to `release_all` had swapped the dictation key release
+   for a Ctrl release, which would have left `Ctrl+Space` stuck down. Both are released now.
+
+### Also
+
+- `=` and `-` are now in the key map (`VK_OEM_PLUS` / `VK_OEM_MINUS`), with `plus` / `minus` /
+  `equal` / `hyphen` aliases, so any zoom binding in an app can be configured.
+- 13 hand gestures now, up from 11.
+
+---
+
 ## [1.7.0] — drag moves to the ring pinch, scrolling becomes gaze-only
 
 Eye-gaze scrolling replaced the pinch scroll, so the held pinches were free to be re-cut.

@@ -185,6 +185,15 @@ DEFAULTS: Dict[str, Any] = {
     # --- dictation focus: click into the field you are looking at before the dictation hotkey ---
     "ptt_focus_mode": "auto",          # auto | uia | always | off  (auto clicks pages we cannot read)
     "ptt_focus_settle_ms": 40.0,       # gap between clicking the field and Ctrl+Space going out
+    # --- two-hand pinch zoom: both index pinches, hands apart = in, together = out ---
+    "zoom_pinch_enabled": True,
+    "zoom_keys_in": ["ctrl", "="],
+    "zoom_keys_out": ["ctrl", "-"],
+    "zoom_step_px": 22.0,              # pinch-point travel that earns one zoom step
+    "zoom_deadband_px": 3.0,           # per-frame jitter floor
+    "zoom_max_steps_per_frame": 3,     # a fast sweep must not flood the key queue
+    "zoom_confirm_frames": 2,
+    "zoom_session_timeout_s": 20.0,
     # --- gaze focus: the window you look at becomes the focused window ---
     "gaze_focus_enabled": True,
     "gaze_focus_dwell_s": 0.15,        # look at a window this long and it comes forward

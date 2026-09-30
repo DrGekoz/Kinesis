@@ -6,14 +6,14 @@
 
 Control Windows with your hands through one webcam. Look at a window and it becomes the target; move your index finger and the cursor goes there. No keyboard, no mouse, no wearable.
 
-**11 gestures · gesture locking · desk geometry · multi-monitor · ~46 ms · gaze targeting · gaze tab clicks · desktop overlay · dictation into the field you look at · virtual camera · 165 tests**
+**13 gestures · gesture locking · desk geometry · multi-monitor · ~46 ms · gaze targeting · gaze tab clicks · desktop overlay · dictation into the field you look at · virtual camera · 176 tests**
 
 <a href="https://github.com/DrGekoz/Kinesis/stargazers"><img src="https://img.shields.io/github/stars/DrGekoz/Kinesis?style=for-the-badge&color=f59e0b" alt="Stars"></a>
 <a href="https://github.com/DrGekoz/Kinesis/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-MIT-22c55e?style=for-the-badge" alt="License"></a>
 <img src="https://img.shields.io/badge/platform-Windows-06b6d4?style=for-the-badge" alt="Platform">
 <img src="https://img.shields.io/badge/python-3.11-8b5cf6?style=for-the-badge" alt="Python">
 <img src="https://img.shields.io/badge/latency-~46ms-f43f5e?style=for-the-badge" alt="Latency">
-<img src="https://img.shields.io/badge/tests-165%20passing-22c55e?style=for-the-badge" alt="Tests">
+<img src="https://img.shields.io/badge/tests-176%20passing-22c55e?style=for-the-badge" alt="Tests">
 <img src="https://img.shields.io/badge/virtual%20camera-OBS-8b5cf6?style=for-the-badge" alt="Virtual camera">
 
 [Gestures](#gestures) · [Quick start](#quick-start) · [Install](#install) · [Calibration](#calibration) · [Gaze](#gaze) · [Overlay](#overlay) · [Dictation](#dictation) · [Config](#config) · [Troubleshooting](#troubleshooting) · [Credits](#credits)
@@ -26,7 +26,7 @@ Built for desks with several monitors, not one. Your eyes track what you are foc
 
 | Feature | What it means |
 | --- | --- |
-| **11 hand gestures** | Cursor, click, right click, double click, drag, Ctrl+Tab, Alt-Tab, minimise, maximise/fullscreen, push-to-talk — plus gaze scrolling |
+| **13 hand gestures** | Cursor, click, right click, double click, drag, zoom in/out, Ctrl+Tab, Alt+Tab, minimise, maximise/fullscreen, push-to-talk — plus gaze scrolling |
 | **Gesture locking** | A gesture takes the hand and holds it until you open up, so gestures cannot be read out of each other's tails |
 | **Gaze targeting** | Eye tracking picks the window a gesture acts on — and dwell brings it forward, so typing lands there too |
 | **Desk geometry** | Learns your screens' real sizes from EDID, their physical row, and how far away you sit, then uses it to aim the gaze calibration and the pointing maths |
@@ -48,6 +48,8 @@ Built for desks with several monitors, not one. Your eyes track what you are foc
 | Thumb + middle pinch | Right click |
 | Thumb + ring pinch, held | **Drag** — text selection, moving files. Cursor freezes, so the selection does not run away |
 | Right fist held + left index pinch | Next browser tab (`Ctrl+Tab`) |
+| Both hands index-thumb pinch, apart | Zoom in (`Ctrl+=`) — travel earns the steps, so a small move is a small zoom |
+| Both hands index-thumb pinch, together | Zoom out (`Ctrl+-`) |
 | Right fist held + left middle pinch | Previous browser tab (`Ctrl+Shift+Tab`) |
 | Open hand → closed fist | Minimise the target window (exiting fullscreen first) |
 | Closed fist → open hand | Maximise; if maximised, fullscreen (`f` on YouTube, `F11` elsewhere) |
@@ -195,6 +197,8 @@ Everything lives in `kinesis_config.json` and every key can be overridden live w
 | `ring_confirm_frames` / `scroll_release_frames` | 2 / 3 | Hold to start a held action, flicker-tolerance before it releases |
 | `scroll_gain` / `scroll_smooth` / `scroll_deadband_px` | 1.0 / 0.45 / 1.5 | Pinch-scroll tuning, used only when `pinch_ring_action=scroll` |
 | `alt_tab_hold_s` / `alt_tab_session_timeout_s` | 2.0 / 30.0 | Left-fist hold, and the Alt release safety |
+| `zoom_pinch_enabled` / `zoom_step_px` | true / 22 | Two-hand pinch zoom, and the hand travel that earns one zoom step |
+| `zoom_keys_in` / `zoom_keys_out` | ctrl+= / ctrl+- | The keys the zoom sends |
 | `ctrl_tab_hold_s` / `ctrl_tab_repeat_s` | 0.6 / 0.35 | Right-fist hold to open Ctrl-Tab, and the re-tap rate |
 | `ctrl_tab_flick_guard` | two_hands | A right fist holds Ctrl instead of minimising while the left hand is in frame |
 | `swipe_action` | none | The old lateral-swipe tab binding — replaced, off by default |
@@ -233,7 +237,7 @@ Everything lives in `kinesis_config.json` and every key can be overridden live w
 ## Verification
 
 ```bat
-.venv\Scripts\python -m pytest tests -q       165 passed
+.venv\Scripts\python -m pytest tests -q       176 passed
 .venv\Scripts\python tools\verify_actions.py  16/16 live OS checks
 .venv\Scripts\python tools\verify_overlay.py  12/12 against the real compositor
 .venv\Scripts\python tools\check_tabs.py      tab-strip detection against your open browsers
@@ -242,7 +246,7 @@ Everything lives in `kinesis_config.json` and every key can be overridden live w
 check.bat                                     all of the above, in order
 ```
 
-165 tests cover every gesture, the pose classifier, the click/flick arbitration, gesture locking, the
+176 tests cover every gesture, the pose classifier, the click/flick arbitration, gesture locking, the
 Alt-Tab session, gaze targeting and focus, desk geometry against a hand-built EDID block, overlay
 rendering, and release-all safety — with landmark geometry synthesised at exact joint angles rather
 than recorded, so each classification is checked against a known-correct input.

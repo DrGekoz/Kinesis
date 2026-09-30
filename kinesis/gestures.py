@@ -10,6 +10,8 @@ Per frame it does five things:
 """
 from __future__ import annotations
 
+import math
+
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -62,6 +64,11 @@ class GestureEngine:
         self.active: Optional[str] = None          # scroll | drag | swipe
         self.lock: Optional[str] = None            # the gesture that owns the hand right now
         self._drag_source: Optional[str] = None
+        self._zoom_active = False                  # two-hand pinch zoom
+        self._zoom_start = 0.0
+        self._zoom_last = 0.0
+        self._zoom_accum = 0.0
+        self._zoom_release = 0
         self.ctrl_held = False                     # Ctrl-Tab modifier session
         self._right_fist_since: Optional[float] = None
         self._ctrl_tab_session_start = 0.0
@@ -180,6 +187,9 @@ class GestureEngine:
     def _end_held(self, note: str) -> None:
         self.active = None
         self._drag_source = None
+        self._zoom_active = False
+        self._zoom_accum = 0.0
+        self._zoom_release = 0
         self._scroll_anchor = None
         self._scroll_smooth_y = None
         self._scroll_release = 0
@@ -308,6 +318,12 @@ class GestureEngine:
             # the cursor hand is a fist here: nothing to point with, and nothing else may start
             return out
 
+        # ---------------- two-hand pinch zoom ----------------
+        out.extend(self._update_zoom(primary, left_hand, now, target_hwnd, can_start))
+        if self._zoom_active:
+            # both index pinches are the zoom, so no click, no flick, and no cursor to follow
+            return out
+
         # ---------------- pose transitions: flicks ----------------
         if fist_conf and self._state != "fist":
             if (can_start and not self._ctrl_tab_holding(primary, left_hand)
@@ -413,7 +429,10 @@ class GestureEngine:
             self._swipe_samples.clear()
 
         # ---------------- clicks ----------------
-        if (not fist_conf and self.active is None and not self.ptt_held
+        # both hands pinching index is the zoom, so it cannot also be a click
+        both_index = (left_hand is not None and left_hand is not primary
+                      and bool(pinches.get("index")) and bool(left_hand.pinches.get("index")))
+        if (not fist_conf and self.active is None and not self.ptt_held and not both_index
                 and self.lock in (None, "click")):
             out.extend(self._click_logic(primary, now))
             if self._pending_click is not None and self.lock is None:
@@ -582,6 +601,86 @@ class GestureEngine:
         self._prev_left_finger = finger
         return out
 
+    def _hand_span(self, a: Optional[HandPose], b: Optional[HandPose]) -> float:
+        """Distance between the two hands' pinch points, in pixels."""
+        if a is None or b is None:
+            return 0.0
+        ax, ay = a.pinch_point_px("index")
+        bx, by = b.pinch_point_px("index")
+        return math.hypot(bx - ax, by - ay)
+
+    def _update_zoom(self, primary: Optional[HandPose], other: Optional[HandPose],
+                     now: float, target_hwnd: Optional[int] = None,
+                     can_start: bool = True) -> List[Intent]:
+        """Both hands pinching index+thumb, then apart to zoom in and together to zoom out.
+
+        Travel is accumulated and spent in steps, so a small move is a small zoom and a big sweep is
+        a big one, at a rate the hand controls rather than a timer.
+        """
+        out: List[Intent] = []
+        if not bool(self.cfg["zoom_pinch_enabled"]):
+            return out
+        # another hand must be the SAME object as primary when only one is in frame - and then the
+        # two pinches are one pinch, which zoomed on a single hand until this was normalised
+        other = self._other_hand(primary, other)
+        both = (primary is not None and other is not None
+                and bool(primary.pinches.get("index")) and bool(other.pinches.get("index")))
+        both_index = (other is not None and bool(primary) and bool(other.pinches.get("index"))
+                      and bool(primary.pinches.get("index")))
+        if not self._zoom_active:
+            # `lock == "click"` counts too: a single pinch that becomes a two-hand pinch has already
+            # armed a click and taken the lock, and the pending click is cancelled below.
+            if both and (can_start or self.lock == "click"):
+                if self._confirm("zoom", True, int(self.cfg["zoom_confirm_frames"])):
+                    self._zoom_active = True
+                    self._zoom_start = now
+                    self._zoom_last = self._hand_span(primary, other)
+                    self._zoom_accum = 0.0
+                    self._zoom_release = 0
+                    self._pending_click = None  # both index pinches belong to the zoom now
+                    self._take_lock("zoom", now)
+                    self.last_note = "zoom: two-hand pinch"
+            else:
+                # reset ONLY when it is not a two-hand pinch: resetting after every failed confirm
+                # wiped the accumulator each frame, so the confirm could never reach its threshold
+                self._confirm("zoom", False)
+            return out
+
+        if both:
+            self._zoom_release = 0
+        else:
+            self._zoom_release += 1
+            if self._zoom_release >= int(self.cfg["scroll_release_frames"]):
+                self._zoom_active = False
+                self._release_lock(now)
+                self.last_note = "zoom end"
+                return out
+        if (now - self._zoom_start) > float(self.cfg["zoom_session_timeout_s"]):
+            self._zoom_active = False
+            self._release_lock(now)
+            self.last_note = "zoom timeout"
+            return out
+
+        span = self._hand_span(primary, other)
+        delta = span - self._zoom_last
+        self._zoom_last = span
+        if abs(delta) < float(self.cfg["zoom_deadband_px"]):
+            return out
+        self._zoom_accum += delta
+        step = max(1.0, float(self.cfg["zoom_step_px"]))
+        steps = int(abs(self._zoom_accum) // step)
+        if not steps:
+            return out
+        steps = min(steps, max(1, int(self.cfg["zoom_max_steps_per_frame"])))
+        zoom_in = self._zoom_accum > 0.0            # hands apart = zoom in
+        self._zoom_accum -= steps * step * (1.0 if zoom_in else -1.0)
+        keys = tuple(self.cfg["zoom_keys_in"] if zoom_in else self.cfg["zoom_keys_out"])
+        for _ in range(steps):
+            out.append(Intent("keys.tap", keys=keys, focus_hwnd=target_hwnd,
+                              note="zoom in" if zoom_in else "zoom out"))
+        self.last_note = f"zoom {'in' if zoom_in else 'out'} x{steps}"
+        return out
+
     def _swipe_detect(self, primary: HandPose, now: float,
                       target_hwnd: Optional[int] = None) -> Optional[Intent]:
         if str(self.cfg["swipe_action"]).lower() == "none":
@@ -676,10 +775,15 @@ class GestureEngine:
             out.append(Intent("keys.up", keys=("alt",)))
         if self.ptt_held:
             out.append(Intent("keys.up", keys=self.ptt_keys))
+        if self.ctrl_held:
+            out.append(Intent("keys.up", keys=("ctrl",)))
         self.active = None
         self.lock = None
         self.alt_held = False
         self.ctrl_held = False
+        self._zoom_active = False
+        self._zoom_accum = 0.0
+        self._zoom_release = 0
         self._right_fist_since = None
         self._prev_left_finger = None
         self.ptt_held = False
