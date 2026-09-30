@@ -5,6 +5,61 @@ All notable changes to Kinesis. The README stays compact on purpose: this is whe
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are
 [semantic](https://semver.org/spec/v2.0.0.html).
 
+## [1.13.0] — the close-flick is gone; minimise is a claw drag
+
+### What changed
+
+The **open hand → fist flick** minimised a window, and **fist → open** maximised one. Both are
+removed. The fist is the Alt-Tab and Ctrl-Tab modifier, which made every attempt at either tab
+gesture minimise whatever had focus, and any hand passing *through* a fist on its way open
+maximise a window nobody asked it to.
+
+Minimise and maximise are now a **claw drag**: put all four fingertips on the thumb and drag the
+hand **down** to minimise, **up** to maximise, within `claw_window_s`.
+
+    claw_minimise      true        the gesture exists
+    claw_travel_px     140.0       how far the palm must travel for it to count
+    claw_window_s      1.2         and how quickly, before it was just a slow move
+
+Why the claw rather than any other pose:
+
+1. **It cannot be confused with the fist.** All four fingertips on the thumb leaves nothing curled
+   enough to read as `n_ext == 0`, so it can never fire mid Alt-Tab or Ctrl-Tab. The flick's
+   entire problem was that it *was* the fist.
+2. **It cannot be confused with a held pinch.** `pinch_ring` drags and `pinch_middle` right-clicks;
+   a claw suppresses both while it is held, and it re-arms the moment a finger lets go.
+3. **It requires a gaze target.** With no window under your eyes the drag is ignored outright, and
+   the HUD says so (`claw down ignored - not looking at a window`). Acting on whatever had focus
+   is what made the old gesture destructive.
+4. **It needs intent and a direction.** A slow drift or a small nudge is not a drag: the palm has
+   to travel `claw_travel_px` within `claw_window_s`.
+
+The fist still swallows a pinch that is in flight, so reaching for the Alt-Tab modifier still does
+not leave a click waiting to fire.
+
+### Dead code removed with it
+
+- `flick_window_s` and `flick_settle_s` are gone from `DEFAULTS` (nothing read them any more).
+- `ctrl_tab_flick_guard` **remains in the config, inert**, so an existing `kinesis_config.json`
+  still loads without a KeyError. It no longer changes behaviour: a right fist means Ctrl whenever
+  `ctrl_tab_enabled` is on. `_ctrl_tab_holding()` lost its guard branch accordingly.
+- The **default Gesture-Map no longer binds a single-hand fist to `minimise`**, or an open hand to
+  `maximise`. This one mattered: the map layer runs independently of the built-in engine, so
+  removing the flick alone would still have left the default map minimising on every fist. A test
+  pins it (`test_the_default_map_does_not_bind_a_bare_fist_to_a_window_action`).
+- `BUILT_IN`'s descriptions for `open` and `fist` now say what those poses actually do.
+
+The ten shipped maps in `gesture_maps/` were checked: they only use `fist`/`open` inside **two-hand**
+gestures, which never touched the removed path, so none of them changed.
+
+### Tests
+
+273 pass. `build_hand()` grew multi-finger-pinch support so a claw is geometrically constructible at
+the landmark level — a folded thumb sits ~2 hand-scales from the curled fingertips, so the claw
+briefly existed only as engine state and could not be tested end-to-end. The helper now draws the
+touching tips into a tight cluster first and puts the thumb in the middle of it, which is what a
+real claw does and what gets all four tips inside `pinch_on` (0.34).
+
 ## [1.12.1] — the deploy script
 
 - cloudflare/deploy.py: create the D1 database, apply the schema, seed the ten maps, publish the

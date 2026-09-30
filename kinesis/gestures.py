@@ -102,6 +102,16 @@ class GestureEngine:
         self._t_open = 0.0
         self._t_fist = 0.0
         self._t_flick = 0.0
+
+        # claw drag (minimise / maximise)
+
+        self._claw_active = False
+
+        self._claw_y0 = 0.0
+
+        self._claw_t0 = 0.0
+
+        self._claw_fired = False
         self._left_fist_since: Optional[float] = None
         self._t_tab = 0.0
         self._shaka_since: Optional[float] = None
@@ -226,25 +236,16 @@ class GestureEngine:
 
     def _ctrl_tab_holding(self, primary: Optional[HandPose],
                           left_hand: Optional[HandPose] = None) -> bool:
-        """Is this right-hand fist the Ctrl modifier rather than a close-flick?
+        """Is this right-hand fist the Ctrl modifier?
 
-        Which hand holds the modifier is the only thing that tells Ctrl-Tab from Alt-Tab, so a right
-        fist has to be able to mean "hold Ctrl" - and that collides with the right hand's own
-        close-flick (minimise). The guard is deliberate: while the left hand is in frame, a right
-        fist is treated as the modifier. `ctrl_tab_flick_guard` relaxes it to `left_pinch` (only
-        while the left hand is actually pinching) or `off` if you would rather the flick always win.
+        This used to need a guard, because a right fist was ALSO the close-flick that minimised,
+        and only the two-hand mode could tell "hold Ctrl" from "close the window". The flick is
+        gone (see the claw drag), so a right fist simply means Ctrl. `ctrl_tab_flick_guard` is
+        retained in the config for backwards compatibility and is no longer read.
         """
         if not bool(self.cfg["ctrl_tab_enabled"]) or not self._is_fist(primary):
             return False
-        if self.ctrl_held:
-            return True
-        guard = str(self.cfg["ctrl_tab_flick_guard"]).lower()
-        if guard == "off":
-            return False
-        other = self._other_hand(primary, left_hand)
-        if self._left_tap_finger(other) is not None:
-            return True
-        return guard == "two_hands" and other is not None
+        return True
 
     def _confirm(self, key: str, value: bool, need: int = CONFIRM_FRAMES) -> bool:
         n = self._counters.get(key, 0)
@@ -331,27 +332,19 @@ class GestureEngine:
             # both index pinches are the zoom, so no click, no flick, and no cursor to follow
             return out
 
-        # ---------------- pose transitions: flicks ----------------
+        # ---------------- pose transitions ----------------
+        # The open->fist flick used to minimise and fist->open used to maximise. Both are gone.
+        # The fist is the Alt-Tab and Ctrl-Tab modifier, so every attempt at either gesture was
+        # minimising whatever had focus, and a hand passing through a fist on its way open was
+        # maximising windows nobody asked it to. The fist still tracks state because other logic
+        # needs to know it is a fist - it just does not do anything any more.
         if fist_conf and self._state != "fist":
-            if (can_start and not self._ctrl_tab_holding(primary, left_hand)
-                    and (now - self._t_open) <= float(self.cfg["flick_window_s"])
-                    and (now - self._t_flick) > 0.8):
-                out.append(Intent("window.minimise", monitor=aim_index, target_hwnd=target_hwnd,
-                                  note="close flick"))
-                self._t_flick = now
-                self._pending_click = None       # the close swallowed the pinch
-                self._take_lock("flick", now)
-                self.last_note = "close flick -> minimise"
             self._state = "fist"
             self._t_fist = now
+            # A fist still swallows a pinch that is in flight. It no longer minimises, but reaching
+            # for the Alt-Tab fist should not leave a click waiting to fire either.
+            self._pending_click = None
         elif open_conf and self._state != "open":
-            if can_start and (now - self._t_fist) <= float(self.cfg["flick_window_s"]) \
-                    and (now - self._t_flick) > 0.8:
-                out.append(Intent("window.maximise", monitor=aim_index, target_hwnd=target_hwnd,
-                                  note="open flick"))
-                self._t_flick = now
-                self._take_lock("flick", now)
-                self.last_note = "open flick -> maximise/fullscreen"
             self._state = "open"
             self._t_open = now
         elif self._state == "none":
@@ -365,6 +358,41 @@ class GestureEngine:
         elif fist_conf:
             self._t_fist = now
 
+        # ---------------- claw drag: minimise / maximise ----------------
+        # Pinch everything (all four fingertips to the thumb) and drag down to minimise, up to
+        # maximise. It cannot be confused with the fist, so it can never fire during an alt-tab,
+        # and it is ignored outright when the gaze is not over a window - acting on whatever
+        # happens to have focus is what made the old gesture so destructive.
+        claw = bool(self.cfg["claw_minimise"]) and all(
+            pinches.get(finger) for finger in ("index", "middle", "ring", "pinky"))
+        if claw and self.active is None and not self.alt_held and not self.ctrl_held \
+                and not self.ptt_held and not self._zoom_active:
+            if not self._claw_active:
+                self._claw_active = True
+                self._claw_y0 = float(primary.palm_px[1])
+                self._claw_t0 = now
+                self._claw_fired = False
+            elif not self._claw_fired:
+                travel = float(primary.palm_px[1]) - self._claw_y0
+                if (now - self._claw_t0) <= float(self.cfg["claw_window_s"]) \
+                        and abs(travel) >= abs(float(self.cfg["claw_travel_px"])):
+                    going_down = travel > 0
+                    if target_hwnd is None:
+                        self._claw_fired = True
+                        self.last_note = ("claw " + ("down" if going_down else "up")
+                                          + " ignored - not looking at a window")
+                    else:
+                        out.append(Intent("window.minimise" if going_down else "window.maximise",
+                                          monitor=aim_index, target_hwnd=target_hwnd,
+                                          note="claw drag"))
+                        self._claw_fired = True
+                        self._take_lock("claw", now)
+                        self.last_note = ("claw drag -> "
+                                          + ("minimise" if going_down else "maximise"))
+        elif not claw:
+            self._claw_active = False
+            self._claw_fired = False
+            self._claw_y0 = 0.0
         # ---------------- push to talk (shaka) ----------------
         shaka = primary.pose == POSE_SHAKA
         if self.ptt_held:
@@ -385,8 +413,8 @@ class GestureEngine:
 
         # ---------------- held actions: scroll / drag ----------------
         # --- held pinches: thumb+ring carries the drag now, thumb+pinky is unbound ---
-        ring = bool(pinches.get("ring"))
-        pinky = bool(pinches.get("pinky"))
+        ring = bool(pinches.get("ring")) and not claw
+        pinky = bool(pinches.get("pinky")) and not claw
         ring_action = str(self.cfg["pinch_ring_action"]).lower()      # drag | scroll | none
         pinky_action = str(self.cfg["pinch_pinky_action"]).lower()    # drag | none
         ring_conf = self._confirm("ring", ring, int(self.cfg["ring_confirm_frames"]))
@@ -444,7 +472,8 @@ class GestureEngine:
         both_index = (left_hand is not None and left_hand is not primary
                       and bool(pinches.get("index")) and bool(left_hand.pinches.get("index")))
         if (not self.map_owns("pinch_index") and not self.map_owns("pinch_middle")
-                and not fist_conf and self.active is None and not self.ptt_held and not both_index
+                and not fist_conf and not claw and self.active is None and not self.ptt_held \
+                and not both_index
                 and self.lock in (None, "click")):
             out.extend(self._click_logic(primary, now))
             if self._pending_click is not None and self.lock is None:

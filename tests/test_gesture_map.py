@@ -126,6 +126,23 @@ def test_the_default_map_claims_only_what_it_should():
     assert default.owns("peace") is False
 
 
+def test_the_default_map_does_not_bind_a_bare_fist_to_a_window_action():
+    """The fist is the Alt-Tab and Ctrl-Tab modifier now.
+
+    While the close-flick existed, the shipped default map ALSO bound a single-hand fist to
+    minimise - so even after the flick was removed the map would have kept minimising whatever had
+    focus every time someone reached for the Alt or Ctrl modifier. A one-hand fist must not map to
+    a window action in the defaults.
+    """
+    default = gm.default_map()
+    for b in default.bindings:
+        if b.gesture.two_hand:
+            continue                                   # two-hand gestures are a different thing
+        assert not (b.gesture.posed == "fist" and b.action.kind == "system"), \
+            f"the default map binds a bare fist to {b.action.value!r}"
+    assert default.owns("fist") is False
+
+
 def test_the_shipped_maps_leave_push_to_talk_alone():
     """shaka is push to talk. A shared map that silently rebinds it would be a nasty surprise."""
     folder = Path(__file__).resolve().parent.parent / "gesture_maps"

@@ -30,7 +30,7 @@ class FakeGaze:
 
 
 def make_pose(extended=("index", "middle", "ring", "pinky"), pinches=(), yaw=0.0, pitch=0.0,
-              pose_name="", handedness="Right"):
+              pose_name="", handedness="Right", palm=(0.5, 0.6)):
     ext = {f: (f in extended) for f in ("thumb", "index", "middle", "ring", "pinky")}
     pin = {f: (f in pinches) for f in ("index", "middle", "ring", "pinky")}
     return HandPose(handedness=handedness, pose=pose_name, extended=ext, pinches=pin,
@@ -38,7 +38,7 @@ def make_pose(extended=("index", "middle", "ring", "pinky"), pinches=(), yaw=0.0
                     points_px=[(320.0, 240.0) for _ in range(21)],
                     points_norm=[(0.5, 0.5) for _ in range(21)],
                     index_tip_px=(320.0, 240.0), index_tip_norm=(0.5, 0.5),
-                    palm_px=(320.0, 300.0),
+                    palm_px=(palm[0] * 640.0, palm[1] * 480.0),
                     yaw=yaw, pitch=pitch, yaw_2d=yaw, confidence=0.95)
 
 
@@ -148,18 +148,35 @@ def test_gaze_scroll_warps_the_cursor_so_the_wheel_lands_on_the_target():
 
 # ---------------------------------------------------------------- gaze targeting
 def test_window_gesture_carries_the_gaze_target():
-    """The close flick must act on the window the gaze resolved, not on whatever has focus."""
+    """The claw drag must act on the window the gaze resolved, not on whatever has focus."""
     engine = GestureEngine(Config())
     now = 1000.0
-    engine.update([make_pose(**OPEN)], None, now, 0.033, target_hwnd=555)
-    engine.update([make_pose(**OPEN)], None, now + 0.033, 0.033, target_hwnd=555)
-    out = []
-    for i in range(6):
+    claw = dict(extended=(), pose_name="MIXED", pinches=("index", "middle", "ring", "pinky"))
+    for _ in range(3):
         now += 0.033
-        out += engine.update([make_pose(extended=(), pose_name="FIST")], None, now, 0.033,
+        engine.update([make_pose(**claw, palm=(0.5, 0.30))], None, now, 0.033, target_hwnd=555)
+    out = []
+    for i in range(8):
+        now += 0.033
+        out += engine.update([make_pose(**claw, palm=(0.5, 0.30 + i * 0.07))], None, now, 0.033,
                              target_hwnd=555)
     mins = [i for i in out if i.kind == "window.minimise"]
     assert mins and mins[0].target_hwnd == 555
+
+
+def test_window_gesture_is_ignored_without_a_gaze_target():
+    engine = GestureEngine(Config())
+    now = 1000.0
+    claw = dict(extended=(), pose_name="MIXED", pinches=("index", "middle", "ring", "pinky"))
+    for _ in range(3):
+        now += 0.033
+        engine.update([make_pose(**claw, palm=(0.5, 0.30))], None, now, 0.033, target_hwnd=None)
+    out = []
+    for i in range(8):
+        now += 0.033
+        out += engine.update([make_pose(**claw, palm=(0.5, 0.30 + i * 0.07))], None, now, 0.033,
+                             target_hwnd=None)
+    assert not [i for i in out if i.kind in ("window.minimise", "window.maximise")]
 
 
 def test_tab_swipe_carries_a_focus_target():

@@ -85,13 +85,29 @@ def build_hand(cx=0.5, cy=0.62, extended=("index", "middle", "ring", "pinky"),
     pts[1], pts[2], pts[3], pts[4] = t_cmc, t_mcp, t_ip, t_tip
 
     if pinches:
-        for finger in pinches:
-            tip_index = idx[finger][3]
-            ratio = 0.20                                   # comfortably inside pinch_on (0.34)
-            base_pt = pts[tip_index]
+        # A single pinch parks the thumb on that fingertip. More than one is a claw, and a real
+        # claw curls its fingertips INWARD toward the thumb - which is the whole point, because a
+        # thumb at the centroid of the untouched curled tips is still ~0.35 hand-scales from the
+        # outer fingers (index and pinky are 1.2 scales apart), which is outside pinch_on (0.34).
+        # So draw the touching tips to a tight cluster first, then put the thumb in the middle of
+        # it. Without that step the landmark-level claw is geometrically impossible to build.
+        wanted = [idx[f][3] for f in pinches]
+        if len(wanted) == 1:
+            finger = next(f for f, (m, p, d_, t_) in idx.items() if t_ == wanted[0])
+            t = wanted[0]
             angle = {"index": 0.0, "middle": 30.0, "ring": 60.0, "pinky": 90.0}[finger]
-            pts[4] = (base_pt[0] + ratio * scale * math.cos(math.radians(angle)),
-                      base_pt[1] + ratio * scale * math.sin(math.radians(angle)))
+            ratio = 0.20                                   # comfortably inside pinch_on (0.34)
+            base_pt = pts[t]
+            a = math.radians(angle)
+            pts[4] = (base_pt[0] + ratio * scale * math.cos(a),
+                      base_pt[1] + ratio * scale * math.sin(a))
+        else:
+            bx = sum(pts[t][0] for t in wanted) / len(wanted)
+            by = sum(pts[t][1] for t in wanted) / len(wanted)
+            for n, t in enumerate(wanted):                 # cluster them, then tuck them under the thumb
+                a = math.radians(90.0 + 180.0 * n / len(wanted))
+                pts[t] = (bx + 0.06 * scale * math.cos(a), by + 0.06 * scale * math.sin(a))
+            pts[4] = (bx, by)
 
     if rotate:
         pts = {k: _rotate_about(v, (cx, cy), rotate) for k, v in pts.items()}
@@ -324,10 +340,11 @@ class Driver:
         self.intents = []
         self.stamped = []
 
-    def feed(self, poses, steps=1, aim=None):
+    def feed(self, poses, steps=1, aim=None, target_hwnd=None):
         for _ in range(steps):
             self.now += self.dt
-            produced = self.engine.update(poses, aim, self.now, self.dt)
+            produced = self.engine.update(poses, aim, self.now, self.dt,
+                                          target_hwnd=target_hwnd)
             self.intents.extend(produced)
             self.stamped.extend((self.now, i) for i in produced)
         return self
@@ -349,34 +366,63 @@ class Driver:
 OPEN = dict(extended=("index", "middle", "ring", "pinky"))
 POINT = dict(extended=("index",))
 FIST = dict(extended=(), pose_name=POSE_FIST)
+CLAW = dict(extended=(), pose_name="MIXED", pinches=("index", "middle", "ring", "pinky"))
 SHAKA = dict(extended=("pinky",), pose_name=POSE_SHAKA)
 
 
 # ============================================================ gestures: flicks
-def test_close_flick_minimises(cfg):
+def test_claw_drag_down_minimises(cfg):
+    """Pinch everything and drag down. This replaced open->fist, which minimised by accident."""
     d = Driver(cfg)
-    d.feed([make_pose(cfg, **OPEN)], steps=6)
-    d.clear().feed([make_pose(cfg, **FIST)], steps=4)
-    assert d.of("window.minimise"), f"no minimise from open->fist: {d.kinds()}"
-    assert len(d.of("window.minimise")) == 1, "minimise fired more than once"
-    assert not d.of("mouse.click"), "the closing pinch must not also click"
+    d.feed([make_pose(cfg, **CLAW, palm=(0.5, 0.30))], steps=3, target_hwnd=555)
+    d.clear().feed([make_pose(cfg, **CLAW, palm=(0.5, 0.80))], steps=8, target_hwnd=555)
+    mins = d.of("window.minimise")
+    assert len(mins) == 1, f"expected one minimise from a claw drag down: {d.kinds()}"
+    assert mins[0].target_hwnd == 555
+    assert not d.of("mouse.click"), "the claw must not also click"
 
 
-def test_open_flick_maximises(cfg):
+def test_claw_drag_up_maximises(cfg):
     d = Driver(cfg)
-    d.feed([make_pose(cfg, **FIST)], steps=6)
-    d.clear().feed([make_pose(cfg, **OPEN)], steps=4)
-    assert len(d.of("window.maximise")) == 1
+    d.feed([make_pose(cfg, **CLAW, palm=(0.5, 0.80))], steps=3, target_hwnd=555)
+    d.clear().feed([make_pose(cfg, **CLAW, palm=(0.5, 0.20))], steps=8, target_hwnd=555)
+    assert len(d.of("window.maximise")) == 1, d.kinds()
 
 
-def test_slow_close_does_not_minimise(cfg):
-    """Sitting in a half-closed pose for a second means it was not a flick."""
+def test_the_claw_is_ignored_when_not_looking_at_a_window(cfg):
+    """No gaze target means no minimise, rather than acting on whatever happens to have focus."""
     d = Driver(cfg)
-    d.feed([make_pose(cfg, **OPEN)], steps=6)
-    half = make_pose(cfg, extended=("index", "middle"))
-    d.clear().feed([half], steps=40)                  # ~1.3 s
-    d.feed([make_pose(cfg, **FIST)], steps=4)
+    d.feed([make_pose(cfg, **CLAW, palm=(0.5, 0.30))], steps=3, target_hwnd=None)
+    d.clear().feed([make_pose(cfg, **CLAW, palm=(0.5, 0.80))], steps=8, target_hwnd=None)
+    assert not d.of("window.minimise"), f"minimised with no window under the gaze: {d.kinds()}"
+    assert not d.of("window.maximise")
+    assert "not looking at a window" in (d.engine.last_note or "")
+
+
+def test_a_slow_claw_move_does_nothing(cfg):
+    d = Driver(cfg)
+    d.feed([make_pose(cfg, **CLAW, palm=(0.5, 0.30))], steps=3, target_hwnd=555)
+    d.clear()
+    for i in range(40):                     # ~1.3 s of drifting, not a drag
+        d.feed([make_pose(cfg, **CLAW, palm=(0.5, 0.30 + i * 0.008))], steps=1, target_hwnd=555)
+    assert not d.of("window.minimise"), f"a slow move minimised: {d.kinds()}"
+
+
+def test_a_small_claw_move_does_nothing(cfg):
+    d = Driver(cfg)
+    d.feed([make_pose(cfg, **CLAW, palm=(0.5, 0.50))], steps=3, target_hwnd=555)
+    d.clear().feed([make_pose(cfg, **CLAW, palm=(0.5, 0.56))], steps=8, target_hwnd=555)
     assert not d.of("window.minimise")
+
+
+def test_a_lone_fist_does_not_minimise(cfg):
+    """The point of the change: the fist is the Alt-Tab modifier, not a close gesture."""
+    d = Driver(cfg)
+    d.feed([make_pose(cfg, **OPEN)], steps=6, target_hwnd=555)
+    d.clear().feed([make_pose(cfg, **FIST)], steps=8, target_hwnd=555)
+    assert not d.of("window.minimise"), "a fist still minimises - alt-tab will keep doing this"
+    d.clear().feed([make_pose(cfg, **OPEN)], steps=6, target_hwnd=555)
+    assert not d.of("window.maximise"), "open->fist->open still maximises"
 
 
 def test_single_noisy_frame_does_not_minimise(cfg):
@@ -389,8 +435,8 @@ def test_single_noisy_frame_does_not_minimise(cfg):
 
 def test_aimed_monitor_reaches_the_action(cfg):
     d = Driver(cfg)
-    d.feed([make_pose(cfg, **OPEN)], steps=6, aim=3)
-    d.clear().feed([make_pose(cfg, **FIST)], steps=4, aim=3)
+    d.feed([make_pose(cfg, **CLAW, palm=(0.5, 0.30))], steps=3, aim=3, target_hwnd=555)
+    d.clear().feed([make_pose(cfg, **CLAW, palm=(0.5, 0.80))], steps=8, aim=3, target_hwnd=555)
     assert d.of("window.minimise")[0].monitor == 3
 
 
@@ -436,14 +482,17 @@ def test_fast_pinch_still_clicks(cfg):
 
 
 def test_pinch_then_fist_cancels_click(cfg):
-    """The conflict rule: closing a hand into a fist sweeps through a pinch, and that sweep
-    must not fire a click on the way to the minimise."""
+    """The conflict rule: closing a hand into a fist sweeps through a pinch, and that sweep must
+    not fire a click on the way through. The fist itself no longer minimises - it is the Alt-Tab
+    modifier - so the assertion is that reaching for it leaves nothing pending AND no window
+    action, rather than a minimise."""
     d = Driver(cfg)
     d.feed([make_pose(cfg, **OPEN)], steps=6)
     d.feed([make_pose(cfg, extended=("index", "middle", "ring"), pinches=("index",))], steps=2)
-    d.clear().feed([make_pose(cfg, **FIST)], steps=4)
-    assert not d.of("mouse.click"), f"stray click during close flick: {d.kinds()}"
-    assert d.of("window.minimise")
+    d.clear().feed([make_pose(cfg, **FIST)], steps=4, target_hwnd=555)
+    assert not d.of("mouse.click"), f"stray click while closing to a fist: {d.kinds()}"
+    assert not d.of("window.minimise"), f"a fist still minimises: {d.kinds()}"
+    assert not d.of("window.maximise"), f"a fist still maximises: {d.kinds()}"
 
 
 def test_right_click_once_and_cooldown(cfg):
@@ -730,28 +779,49 @@ def test_only_one_held_action_at_a_time(cfg):
 
 # ============================================================ end-to-end chain
 def test_landmarks_to_minimise_end_to_end(cfg):
-    """The whole chain: synthetic landmarks -> pose detector -> gesture engine -> intent,
-    including the through-the-pinch arbitration."""
+    """The whole chain: synthetic landmarks -> pose detector -> gesture engine -> intent.
+
+    A claw travelling down the frame must come out as a minimise, which is what replaced the
+    open->fist flick."""
     engine = GestureEngine(cfg, FRAME)
     det = PoseDetector(cfg)
     now = 1000.0
     dt = 0.033
     intents = []
+    claw = ("index", "middle", "ring", "pinky")
 
-    def step(points, world=None):
+    def step(cy, pinches):
         nonlocal now
         now += dt
-        pose = det.update(points, "Right", *FRAME, world)
-        intents.extend(engine.update([pose], 2, now, dt))
+        pose = det.update(build_hand(cy=cy, extended=(), thumb="in", pinches=pinches),
+                          "Right", *FRAME, None)
+        intents.extend(engine.update([pose], 2, now, dt, target_hwnd=555))
 
-    for _ in range(6):
-        step(build_hand(extended=("index", "middle", "ring", "pinky"), thumb="in"))
+    for _ in range(4):
+        step(0.30, claw)
     intents.clear()
-    for _ in range(6):
-        step(build_hand(extended=("index", "middle", "ring"), thumb="in", pinches=("index",)))
-    for _ in range(6):
-        step(build_hand(extended=(), thumb="in"))
+    for i in range(8):
+        step(0.30 + i * 0.07, claw)
+    assert [x for x in intents if x.kind == "window.minimise"], \
+        "landmarks -> claw drag -> minimise came out as " + str([x.kind for x in intents])
 
-    kinds = [i.kind for i in intents]
-    assert "window.minimise" in kinds, f"end-to-end minimise failed: {kinds}"
-    assert "mouse.click" not in kinds, f"stray click in the chain: {kinds}"
+
+def test_landmarks_fist_does_not_minimise_end_to_end(cfg):
+    engine = GestureEngine(cfg, FRAME)
+    det = PoseDetector(cfg)
+    now = 1000.0
+    intents = []
+
+    def step(extended, thumb):
+        nonlocal now
+        now += 0.033
+        pose = det.update(build_hand(extended=extended, thumb=thumb), "Right", *FRAME, None)
+        intents.extend(engine.update([pose], 2, now, 0.033, target_hwnd=555))
+
+    for _ in range(6):
+        step(("index", "middle", "ring", "pinky"), "out")     # open
+    intents.clear()
+    for _ in range(10):
+        step((), "in")                                        # closed to a fist, held
+    assert not [x for x in intents if x.kind in ("window.minimise", "window.maximise")], \
+        "a fist minimised a window - the alt-tab conflict is back"

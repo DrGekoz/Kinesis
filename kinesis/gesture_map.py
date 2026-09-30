@@ -50,8 +50,8 @@ BUILT_IN: Dict[str, str] = {
     "pinch_middle": "right click",
     "pinch_ring": "drag",
     "shaka": "push to talk",
-    "open": "the open half of minimise / maximise",
-    "fist": "the fist half of minimise / maximise",
+    "open": "open hand: starts a swipe, and holds the Alt-Tab modifier's release",
+    "fist": "held: the Alt-Tab (left) and Ctrl-Tab (right) modifier",
 }
 
 HANDS = ("left", "right", "either")
@@ -305,10 +305,11 @@ def default_map() -> GestureMap:
                     enabled=True),
             Binding(id="default-ptt", gesture=Gesture(posed="shaka"),
                     action=keys("ctrl", "space", note="built in"), enabled=True),
-            Binding(id="default-minimise", gesture=Gesture(posed="fist"),
-                    action=Action(kind="system", value="minimise", note="built in"), enabled=True),
-            Binding(id="default-maximise", gesture=Gesture(posed="open"),
-                    action=Action(kind="system", value="maximise", note="built in"), enabled=True),
+            # No fist->minimise here on purpose. That binding is what made the open->fist flick
+            # feel unavoidable, and it fired on every fist - including the ones that only meant
+            # "hold Alt" or "hold Ctrl". Minimise and maximise are now the claw drag (all four
+            # fingertips on the thumb, dragged down or up), which is a built-in gesture rather
+            # than a pose a map can bind, so it stays out of a shareable file.
         ])
 
 

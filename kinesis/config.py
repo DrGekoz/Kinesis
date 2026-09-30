@@ -64,8 +64,6 @@ DEFAULTS: Dict[str, Any] = {
                                        # (a fist forming inside this window cancels the click)
     "double_click_window_s": 0.45,
     "right_click_cooldown_s": 0.6,
-    "flick_window_s": 0.4,             # open<->fist transition must happen this fast
-    "flick_settle_s": 0.12,            # pose must be stable this long before it counts
     "swipe_window_s": 0.28,
     "swipe_min_fraction": 0.16,        # of frame width
     "swipe_max_vertical_fraction": 0.14,
@@ -77,10 +75,12 @@ DEFAULTS: Dict[str, Any] = {
     "ctrl_tab_hold_s": 0.6,            # right fist held this long opens the session
     "ctrl_tab_repeat_s": 0.35,         # re-tap rate while the left pinch stays held
     "ctrl_tab_session_timeout_s": 30.0,
-    # A right fist is also the close-flick (minimise), so this collision needs a rule:
-    #   two_hands  = a right fist never minimises while the left hand is in frame (default)
-    #   left_pinch = only while the left hand is actually pinching
-    #   off        = the flick always wins
+    # Historical: this guard existed only because a right fist was ALSO the close-flick (minimise).
+    # The flick is gone, so a right fist means Ctrl whenever Ctrl-Tab is on. The key is kept so an
+    # existing kinesis_config.json still loads; it no longer changes behaviour.
+    #   two_hands  = (legacy default, now inert)
+    #   left_pinch = (legacy, now inert)
+    #   off        = (legacy, now inert)
     "ctrl_tab_flick_guard": "two_hands",
     # The open-hand lateral swipe no longer switches tabs - the two-hand gesture replaced it.
     # "tab" restores the old binding; "none" leaves the swipe detected but silent.
@@ -185,6 +185,12 @@ DEFAULTS: Dict[str, Any] = {
     # the standard drag (text selection, moving files) and the pinky pinch is unbound.
     "pinch_ring_action": "drag",       # drag | scroll | none
     "pinch_pinky_action": "none",      # drag | none
+    # Minimise / maximise: pinch everything (all four fingertips to the thumb) and drag down to
+    # minimise, up to maximise. The old open->fist flick is gone - the fist is the Alt-Tab modifier
+    # and was minimising whatever had focus every time either tab gesture was attempted.
+    "claw_minimise": True,
+    "claw_travel_px": 140.0,           # how far the hand must travel for it to count
+    "claw_window_s": 1.2,              # and how quickly, before it was just a slow move
     "ring_confirm_frames": 2,          # ring pinch must hold this long before whatever it is bound
                                        # to starts (was scroll_confirm_frames)
     "drag_confirm_frames": 2,          # thumb-pinky drag must hold this long too (also keeps

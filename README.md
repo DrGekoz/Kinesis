@@ -26,7 +26,7 @@ Built for desks with several monitors, not one. Your eyes track what you are foc
 
 | Feature | What it means |
 | --- | --- |
-| **13 hand gestures** | Cursor, click, right click, double click, drag, zoom in/out, Ctrl+Tab, Alt+Tab, minimise, maximise/fullscreen, push-to-talk — plus gaze scrolling |
+| **13 hand gestures** | Cursor, click, right click, double click, drag, zoom in/out, Ctrl+Tab, Alt+Tab, claw-drag minimise/maximise, push-to-talk — plus gaze scrolling |
 | **Gesture locking** | A gesture takes the hand and holds it until you open up, so gestures cannot be read out of each other's tails |
 | **Gaze targeting** | Eye tracking picks the window a gesture acts on — and dwell brings it forward, so typing lands there too |
 | **Desk geometry** | Learns your screens' real sizes from EDID, their physical row, and how far away you sit, then uses it to aim the gaze calibration and the pointing maths |
@@ -51,13 +51,13 @@ Built for desks with several monitors, not one. Your eyes track what you are foc
 | Both hands index-thumb pinch, apart | Zoom in (`Ctrl+=`) — travel earns the steps, so a small move is a small zoom |
 | Both hands index-thumb pinch, together | Zoom out (`Ctrl+-`) |
 | Right fist held + left middle pinch | Previous browser tab (`Ctrl+Shift+Tab`) |
-| Open hand → closed fist | Minimise the target window (exiting fullscreen first) |
-| Closed fist → open hand | Maximise; if maximised, fullscreen (`f` on YouTube, `F11` elsewhere) |
+| Claw (all four fingertips on the thumb), dragged **down** | Minimise the target window (exiting fullscreen first) |
+| Claw, dragged **up** | Maximise; if maximised, fullscreen (`f` on YouTube, `F11` elsewhere) |
 | Thumb + pinky out, other three curled | Hold `Ctrl+Space` — push-to-talk dictation |
 | **Left** fist held 2 s | Opens Alt-Tab and holds `Alt`; each right-hand pinch taps `Tab`; opening the left fist commits |
 | `END` | Quit, releasing everything |
 
-Window actions are aimed: "minimise" hits the window you were looking at, or the topmost window on the monitor you were pointing at.
+Window actions are aimed: the claw drags the window you were looking at, and if your eyes are not on a window at all it does nothing rather than acting on whatever happens to have focus.
 
 ## Quick start
 
@@ -165,7 +165,7 @@ it. Every gesture still works exactly as before - a pinch clicks, a ring pinch d
 hand holds the button.
 
 There is no pointing gesture any more. Hand tracking still drives clicks, drags, scrolling, tabs,
-minimising and push-to-talk; it just does not move the pointer.
+window minimising and push-to-talk; it just does not move the pointer.
 
 Before calibration the hand keeps driving the pointer (`cursor_fallback = hand`), because a mouse that
 cannot move is worse than a prompt to calibrate. Set it to `hold` if you would rather the pointer
@@ -300,7 +300,8 @@ Everything lives in `kinesis_config.json` and every key can be overridden live w
 | `zoom_pinch_enabled` / `zoom_step_px` | true / 22 | Two-hand pinch zoom, and the hand travel that earns one zoom step |
 | `zoom_keys_in` / `zoom_keys_out` | ctrl+= / ctrl+- | The keys the zoom sends |
 | `ctrl_tab_hold_s` / `ctrl_tab_repeat_s` | 0.6 / 0.35 | Right-fist hold to open Ctrl-Tab, and the re-tap rate |
-| `ctrl_tab_flick_guard` | two_hands | A right fist holds Ctrl instead of minimising while the left hand is in frame |
+| `claw_minimise` / `claw_travel_px` / `claw_window_s` | true / 140 / 1.2 | The claw drag: on, how far the palm must travel, and how fast |
+| `ctrl_tab_flick_guard` | two_hands | Legacy no-op, kept so old configs load — the flick it guarded is gone |
 | `swipe_action` | none | The old lateral-swipe tab binding — replaced, off by default |
 | `ptt_keys` | ctrl, space | The dictation hotkey the shaka holds |
 | `gaze_target_enabled` | true | Gaze picks the target window |
@@ -334,7 +335,7 @@ Everything lives in `kinesis_config.json` and every key can be overridden live w
 | Cursor feels laggy | Raise `filter_beta`, or `filter: false` for raw landmarks |
 | Scrolling jumps or fights you | `scroll_smooth` up (0.6), `scroll_deadband_px` up, `scroll_gain` down |
 | Alt-Tab is not switching | Hold the LEFT fist the full 2 s, then pinch index-to-thumb on the right hand |
-| Ctrl+Tab is not switching | Right fist held `ctrl_tab_hold_s` (0.6 s), then pinch on the LEFT hand. If minimise fires instead, raise `ctrl_tab_flick_guard` back to `two_hands` |
+| Ctrl+Tab is not switching | Right fist held `ctrl_tab_hold_s` (0.6 s), then pinch on the LEFT hand |
 | Gestures act on the wrong window | `calibrate_gaze.bat`, check the hit rate; or `calibrate.bat` for aiming |
 | Clicking a tab does nothing | Gaze has to be calibrated — an invalid gaze point cannot be warp-targeted. `tools/check_tabs.py` confirms the strip is being found |
 | Dictation types into the wrong place | `tools/check_focus.py` shows what the hit test sees; `ptt_focus_mode=uia` only clicks fields it can confirm, `off` disables the click entirely |
@@ -346,7 +347,7 @@ Everything lives in `kinesis_config.json` and every key can be overridden live w
 ## Verification
 
 ```bat
-.venv\Scripts\python -m pytest tests -q       248 passed
+.venv\Scripts\python -m pytest tests -q       273 passed
 .venv\Scripts\python tools\verify_actions.py  16/16 live OS checks
 .venv\Scripts\python tools\verify_overlay.py  12/12 against the real compositor
 .venv\Scripts\python tools\check_tabs.py      tab-strip detection against your open browsers
@@ -357,7 +358,7 @@ Everything lives in `kinesis_config.json` and every key can be overridden live w
 check.bat                                     all of the above, in order
 ```
 
-176 tests cover every gesture, the pose classifier, the click/flick arbitration, gesture locking, the
+273 tests cover every gesture, the pose classifier, the click/fist arbitration, gesture locking, the
 Alt-Tab session, gaze targeting and focus, desk geometry against a hand-built EDID block, overlay
 rendering, and release-all safety — with landmark geometry synthesised at exact joint angles rather
 than recorded, so each classification is checked against a known-correct input.
@@ -374,9 +375,10 @@ be exported, handed to someone else, or published.
     Submit to Marketplace  publish it with a title, description, your name and GitHub link
 
 Gestures marked **(built in)** are the ones Kinesis already uses - click, right click, drag, push to
-talk, minimise, maximise. Binding one overrides the built in, and the editor says so. Everything
-else in the vocabulary is free: peace, three, four, pinky, a little-finger pinch, a point, and any
-two-hand pair.
+talk, and the held fist / open hand that carry Alt-Tab and Ctrl-Tab. Binding one overrides the built
+in, and the editor says so. Everything else in the vocabulary is free: peace, three, four, pinky, a
+little-finger pinch, a point, and any two-hand pair. The claw drag is deliberately not bindable: it is
+the one window gesture that must not be reassigned by an imported map.
 
 Actions are keys (with modifiers), a held key, a mouse click or a real button-hold drag, or a window
 command. There is deliberately **no** "run a program" and no "type text": a map imported from the
@@ -412,4 +414,3 @@ Nothing here injects input on your behalf — every action is Kinesis's own, via
 
 Full version history and the reasoning behind each change: **[CHANGELOG.md](CHANGELOG.md)**.
 Design notes and the research/upgrade path: **[plan.md](plan.md)**.
-
