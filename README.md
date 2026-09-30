@@ -6,14 +6,14 @@
 
 Control Windows with your hands through one webcam. Look at a window and it becomes the target; move your index finger and the cursor goes there. No keyboard, no mouse, no wearable.
 
-**11 gestures · gesture locking · desk geometry · multi-monitor · ~46 ms · gaze targeting · desktop overlay · dictation · virtual camera · 134 tests**
+**11 gestures · gesture locking · desk geometry · multi-monitor · ~46 ms · gaze targeting · gaze tab clicks · desktop overlay · dictation · virtual camera · 143 tests**
 
 <a href="https://github.com/DrGekoz/Kinesis/stargazers"><img src="https://img.shields.io/github/stars/DrGekoz/Kinesis?style=for-the-badge&color=f59e0b" alt="Stars"></a>
 <a href="https://github.com/DrGekoz/Kinesis/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-MIT-22c55e?style=for-the-badge" alt="License"></a>
 <img src="https://img.shields.io/badge/platform-Windows-06b6d4?style=for-the-badge" alt="Platform">
 <img src="https://img.shields.io/badge/python-3.11-8b5cf6?style=for-the-badge" alt="Python">
 <img src="https://img.shields.io/badge/latency-~46ms-f43f5e?style=for-the-badge" alt="Latency">
-<img src="https://img.shields.io/badge/tests-134%20passing-22c55e?style=for-the-badge" alt="Tests">
+<img src="https://img.shields.io/badge/tests-143%20passing-22c55e?style=for-the-badge" alt="Tests">
 <img src="https://img.shields.io/badge/virtual%20camera-OBS-8b5cf6?style=for-the-badge" alt="Virtual camera">
 
 [Gestures](#gestures) · [Quick start](#quick-start) · [Install](#install) · [Calibration](#calibration) · [Gaze](#gaze) · [Overlay](#overlay) · [Dictation](#dictation) · [Config](#config) · [Troubleshooting](#troubleshooting) · [Credits](#credits)
@@ -110,6 +110,9 @@ window, gesture, and it lands there — no click-to-focus first.
 
 - **Gaze focus.** Dwell on a window for 0.7 s and it comes to the front, so the keyboard and typing
   land there too. `gaze_focus_enabled: false` keeps gaze as a gesture target only.
+- **Tab switching.** Click while looking at a browser tab and Kinesis parks the pointer on that tab
+  1 ms before the click goes out, so the click lands on the tab you were looking at rather than
+  wherever your hand happened to be pointing. Works in any Chromium browser and Firefox.
 - **Gaze scrolling.** Looking at the top or bottom band scrolls, after a short dwell, ramping up the
   longer you look.
 - **Seat drift is monitored.** Kinesis measures how far away your face is the whole time and says so
@@ -182,6 +185,8 @@ Everything lives in `kinesis_config.json` and every key can be overridden live w
 | `ptt_keys` | ctrl, space | The dictation hotkey the shaka holds |
 | `gaze_target_enabled` | true | Gaze picks the target window |
 | `gaze_focus_enabled` / `gaze_focus_dwell_s` | true / 0.7 | Looking at a window focuses it |
+| `gaze_click_tabs` / `gaze_click_warp_delay_ms` | true / 1.0 | Clicking a tab you are looking at, and the pause after the pointer moves |
+| `tab_strip_top_px` / `tab_strip_height_px` | 6 / 40 | Where the tab strip is, in logical pixels from the client top |
 | `gaze_scroll_mode` / `gaze_scroll_speed` | edge / 480 | Gaze scrolling on/off and speed |
 | `camera_name` / `camera_fov_deg` | auto / 0 | Override the camera, or its diagonal field of view |
 | `bezel_mm` / `assumed_distance_mm` | 10 / 700 | Physical gap between screens; seat distance before calibration |
@@ -200,6 +205,7 @@ Everything lives in `kinesis_config.json` and every key can be overridden live w
 | Scrolling jumps or fights you | `scroll_smooth` up (0.6), `scroll_deadband_px` up, `scroll_gain` down |
 | Alt-Tab is not switching | Hold the left fist the full 2 s, then pinch index-to-thumb on the right hand |
 | Gestures act on the wrong window | `calibrate_gaze.bat`, check the hit rate; or `calibrate.bat` for aiming |
+| Clicking a tab does nothing | Gaze has to be calibrated — an invalid gaze point cannot be warp-targeted. `tools/check_tabs.py` confirms the strip is being found |
 | Overlay does not appear | It needs gaze — an uncalibrated model draws nothing. INSERT toggles it |
 | Gaze picks the neighbouring screen | `--desk-report`: under ~8° between screens, sit further back or restrict `--monitors` |
 | Desk report has wrong sizes | That EDID had no size (says `estimate`) — set `monitor_mm_overrides` |
@@ -207,14 +213,15 @@ Everything lives in `kinesis_config.json` and every key can be overridden live w
 ## Verification
 
 ```bat
-.venv\Scripts\python -m pytest tests -q       134 passed
+.venv\Scripts\python -m pytest tests -q       143 passed
 .venv\Scripts\python tools\verify_actions.py  16/16 live OS checks
 .venv\Scripts\python tools\verify_overlay.py  12/12 against the real compositor
+.venv\Scripts\python tools\check_tabs.py      tab-strip detection against your open browsers
 .venv\Scripts\python tools\bench_overlay.py   per-style overlay cost
 check.bat                                     all of the above, in order
 ```
 
-134 tests cover every gesture, the pose classifier, the click/flick arbitration, gesture locking, the
+143 tests cover every gesture, the pose classifier, the click/flick arbitration, gesture locking, the
 Alt-Tab session, gaze targeting and focus, desk geometry against a hand-built EDID block, overlay
 rendering, and release-all safety — with landmark geometry synthesised at exact joint angles rather
 than recorded, so each classification is checked against a known-correct input.

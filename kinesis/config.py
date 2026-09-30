@@ -157,6 +157,11 @@ DEFAULTS: Dict[str, Any] = {
     "scroll_deadband_px": 1.5,         # per-frame hand movement treated as jitter
     "scroll_smooth": 0.45,             # EMA on the scrolling hand position (0 = raw)
     "alt_tab_session_timeout_s": 30.0, # Alt is force-released after this long
+    # --- gaze-assisted clicking ---
+    "gaze_click_tabs": True,           # click while looking at a browser tab -> switch to that tab
+    "gaze_click_warp_delay_ms": 1.0,   # move the pointer to the gaze point, wait, then click
+    "tab_strip_top_px": 6.0,           # logical px of drag region above the tabs (Chromium)
+    "tab_strip_height_px": 40.0,       # logical height of the tab strip
     # --- gaze focus: the window you look at becomes the focused window ---
     "gaze_focus_enabled": True,
     "gaze_focus_dwell_s": 0.7,         # look at a window this long and it comes forward

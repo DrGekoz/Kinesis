@@ -8,6 +8,7 @@ from typing import Optional
 import cv2
 
 from . import winapi as w
+from . import tabs
 from .actions import ActionRunner
 from .aim import AimClassifier
 from .config import Calibration, Config, load_calibration
@@ -138,6 +139,36 @@ class KinesisApp:
                       f"screen; will warn past "
                       f"{float(self.cfg['distance_warn_fraction']) * 100:.0f}% drift")
 
+    def _annotate_gaze_click(self, intents, gaze, now: float) -> None:
+        """Clicking while looking at a browser tab switches to that tab.
+
+        The pointer has to be *on* the tab for the click to land there, so the intent carries a warp
+        point and the runner moves the pointer, waits `gaze_click_warp_delay_ms`, then clicks. The
+        window is re-resolved here rather than reusing the rate-limited gaze target, because this
+        runs only when a click actually fires.
+        """
+        if not bool(self.cfg["gaze_click_tabs"]):
+            return
+        clicks = [i for i in intents if i.kind in ("mouse.click", "mouse.double")]
+        if not clicks or gaze is None or not getattr(gaze, "valid", False):
+            return
+        hwnd = w.topmost_window_at(int(gaze.x), int(gaze.y), self.monitors,
+                                   {w.own_process_id()},
+                                   self.cfg.get("window_title_blocklist") or ())
+        if not hwnd:
+            return
+        info = w.window_info(hwnd, self.monitors)
+        if info is None or not tabs.is_browser(info):
+            return
+        if not tabs.in_tab_strip(info, gaze.x, gaze.y,
+                                 float(self.cfg["tab_strip_top_px"]),
+                                 float(self.cfg["tab_strip_height_px"])):
+            return
+        for intent in clicks:
+            intent.warp = (float(gaze.x), float(gaze.y))
+            intent.note = (intent.note + " | gaze tab").strip(" |")
+        self.last_gaze_click = f"{info.exe or info.title[:22]} tab strip"
+
     def _resolve_gaze_target(self, gaze, now: float):
         """Turn the gaze point into the window the user is looking at. Rate limited: the window
         walk is an EnumWindows sweep and gaze only refreshes at gaze_hz anyway."""
@@ -241,6 +272,7 @@ class KinesisApp:
                 intents = self.gestures.update(poses, aim.index if aim else None, now, dt,
                                               target_hwnd=target_hwnd)
                 intents.extend(self.gaze_scroller.update(gaze_state, now, dt))
+                self._annotate_gaze_click(intents, gaze_state, now)
                 self._prev = now
                 if bool(self.cfg["exclusive"]):
                     intents = [i for i in intents if i.kind == "cursor.move"]

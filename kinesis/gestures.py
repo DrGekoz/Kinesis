@@ -29,6 +29,7 @@ class Intent:
     monitor: Optional[int] = None
     target_hwnd: Optional[int] = None      # window resolved from gaze (or aim); None = foreground
     focus_hwnd: Optional[int] = None       # focus this first (keyboard needs a focused window)
+    warp: Optional[tuple] = None           # move the pointer here, wait, then act (gaze tab click)
     x: float = 0.0
     y: float = 0.0
     note: str = ""

@@ -47,12 +47,29 @@ class ActionRunner:
             return
         w.set_cursor_pos(int(round(x)), int(round(y)))
 
-    def _click(self, button: str):
+    def _click(self, button: str, warp: Optional[tuple] = None):
+        """Click, optionally after parking the pointer somewhere first.
+
+        Gaze-assisted tab switching: the pointer has to be ON the tab for the click to land there, so
+        it is moved to the gaze point and given `gaze_click_warp_delay_ms` to settle before the click
+        is sent.
+        """
+        if warp is not None:
+            self._set_cursor(warp[0], warp[1])
+            delay = max(0.0, float(self.cfg["gaze_click_warp_delay_ms"])) / 1000.0
+            if delay:
+                time.sleep(delay)
+            self._note(f"gaze warp -> {int(warp[0])},{int(warp[1])} ({delay * 1000:.1f} ms before click)")
         self._note(f"mouse click {button}")
         if not self.dry:
             w.mouse_click(button)
 
-    def _double(self):
+    def _double(self, warp: Optional[tuple] = None):
+        if warp is not None:
+            self._set_cursor(warp[0], warp[1])
+            delay = max(0.0, float(self.cfg["gaze_click_warp_delay_ms"])) / 1000.0
+            if delay:
+                time.sleep(delay)
         self._note("mouse double click")
         if not self.dry:
             w.mouse_click("left")
@@ -225,9 +242,9 @@ class ActionRunner:
             if kind == "cursor.move":
                 self._set_cursor(intent.x, intent.y)
             elif kind == "mouse.click":
-                self._click(intent.button or "left")
+                self._click(intent.button or "left", intent.warp)
             elif kind == "mouse.double":
-                self._double()
+                self._double(intent.warp)
             elif kind == "mouse.down":
                 self._down(intent.button or "left")
             elif kind == "mouse.up":

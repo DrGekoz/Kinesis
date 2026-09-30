@@ -5,6 +5,57 @@ All notable changes to Kinesis. The README stays compact on purpose: this is whe
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are
 [semantic](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] — click the tab you are looking at
+
+Gaze stops being only a *target* and starts being an *input*: a click made while looking at a browser tab lands on that tab.
+
+### Added
+
+- **Gaze-assisted tab switching.** The click gesture now carries an optional warp point. When a click
+  is committed and the gaze point is inside a browser's tab strip, Kinesis moves the pointer to the
+  gaze point exactly, waits `gaze_click_warp_delay_ms` (1 ms by default), and only then sends the
+  click. The pointer is already hand-driven at 15 fps, so it snaps back on the next frame on its own.
+- **`kinesis/tabs.py`** — the tab strip as geometry. Browser identity comes from the window class
+  (`Chrome_WidgetWin_1`, `MozillaWindowClass`) *and* the process image name, because Electron apps
+  share the Chromium class: the exe decides. The strip is the top of the client area, with the first
+  6 logical px excluded because Chromium spends them on the window drag region — and heights scale
+  with the window's DPI, so a 150% display gets a 60 px band.
+- `tools/check_tabs.py` — reports the strip detection against whatever browsers are actually open.
+
+### Fixed (found by running it against a real browser)
+
+- Opera enumerates **hidden helper windows with class `IME` and a zero-size client rect**. They share
+  the browser's executable, so they matched, and their "tab strip" would have been the top of the
+  screen. `tab_strip_band` now rejects degenerate client rects.
+- `WindowInfo` gained `class_name` and `exe`, and `class_name()`/`process_exe()`/`client_rect_on_screen()`/
+  `window_dpi()` are all prototype-declared — the same 64-bit-handle trap that broke the desktop
+  overlay (`int too long to convert`) applies to every new Win32 call.
+
+### Verified
+
+- 143 tests: the strip band at 100% and 150% DPI, drag-region and page-content rejection, browser
+  vs Electron identification, the warp → 1 ms → click ordering, a configurable delay, that a click
+  without a warp never moves the pointer, and that uncalibrated gaze is ignored entirely.
+- Against the live desktop: `opera.exe` / `Chrome_WidgetWin_1`, client `(0, 0, 1920, 1000)`, strip
+  `(6.0, 46.0)`, a point at the middle of the strip classified as a tab and 60 px lower as content.
+
+---
+
+## [1.3.1] — compact README, detail in the changelog
+
+### Changed
+
+- README **566 lines → 242** (49 KB → 14 KB). The pitch stays on top, then features as a table, the
+  gesture reference, quick start, install, calibration, and short dense sections. Nothing was
+  dropped: prose became bullets and the reasoning moved into this file.
+- Fixed the licence badge and credits link, which pointed at `/blob/main/` on a `master` repo.
+
+### Added
+
+- This changelog, and the rule behind it: compact README, full detail here and in the release notes.
+
+---
+
 ## [1.3.0] — one gesture at a time, and an overlay on the desktop
 
 Four problems reported from live use, four fixes.

@@ -291,6 +291,69 @@ gdi32.SelectObject.restype = wintypes.HANDLE
 gdi32.DeleteObject.argtypes = [wintypes.HANDLE]
 
 
+# ---------------------------------------------------------------------------- process + client
+# Same prototype rule as the GDI block: HANDLEs are 64-bit, and an unprototyped call passes ints as
+# C ints, which raises OverflowError the moment a handle exceeds 2^31.
+PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+kernel32.OpenProcess.restype = wintypes.HANDLE
+kernel32.QueryFullProcessImageNameW.argtypes = [wintypes.HANDLE, wintypes.DWORD,
+                                               wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)]
+kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+user32.GetClientRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+user32.ClientToScreen.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.POINT)]
+
+_EXE_CACHE: dict = {}
+
+
+def class_name(hwnd: int) -> str:
+    buf = ctypes.create_unicode_buffer(256)
+    if user32.GetClassNameW(wintypes.HWND(int(hwnd)), buf, 256):
+        return buf.value
+    return ""
+
+
+def process_exe(pid: int) -> str:
+    """Image name of a process, cached - used to tell a browser from any other Chromium window."""
+    pid = int(pid)
+    if pid in _EXE_CACHE:
+        return _EXE_CACHE[pid]
+    name = ""
+    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if handle:
+        try:
+            buf = ctypes.create_unicode_buffer(512)
+            size = wintypes.DWORD(512)
+            if kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+                name = os.path.basename(buf.value)
+        except Exception:
+            name = ""
+        finally:
+            kernel32.CloseHandle(handle)
+    _EXE_CACHE[pid] = name
+    return name
+
+
+def client_rect_on_screen(hwnd: int) -> Optional[tuple]:
+    """The window's client area in screen coordinates - the frame excluded."""
+    rect = wintypes.RECT()
+    if not user32.GetClientRect(wintypes.HWND(int(hwnd)), ctypes.byref(rect)):
+        return None
+    origin = wintypes.POINT(0, 0)
+    if not user32.ClientToScreen(wintypes.HWND(int(hwnd)), ctypes.byref(origin)):
+        return None
+    return (origin.x, origin.y, origin.x + rect.right, origin.y + rect.bottom)
+
+
+def window_dpi(hwnd: int) -> int:
+    """Window DPI, so logical tab-strip heights scale. 96 = 100%."""
+    try:
+        return int(user32.GetDpiForWindow(wintypes.HWND(int(hwnd)))) or 96
+    except Exception:                                       # pragma: no cover
+        return 96
+
+
 def create_overlay_window(x: int, y: int, w: int, h: int, title: str = "Kinesis overlay") -> int:
     """A borderless, click-through, topmost, never-activating window covering the given rect."""
     user32.CreateWindowExW.restype = wintypes.HWND
@@ -386,6 +449,8 @@ class WindowInfo:
     is_maximized: bool
     is_fullscreen: bool
     is_foreground: bool
+    class_name: str = ""   # window class: identifies a browser without guessing from the title
+    exe: str = ""          # process image name, e.g. chrome.exe
 
 
 class MONITORINFOPLAIN(ctypes.Structure):
@@ -441,7 +506,8 @@ def window_info(hwnd: int, monitors: Optional[List[Monitor]] = None) -> Optional
     return WindowInfo(hwnd=hwnd, title=buf.value, rect=rect, monitor_index=idx,
                       process_id=int(pid.value), is_maximized=_is_maximized(hwnd),
                       is_fullscreen=fullscreen,
-                      is_foreground=(user32.GetForegroundWindow() == hwnd))
+                      is_foreground=(user32.GetForegroundWindow() == hwnd),
+                      class_name=class_name(hwnd), exe=process_exe(int(pid.value)))
 
 
 def foreground_window(monitors: Optional[List[Monitor]] = None) -> Optional[WindowInfo]:
