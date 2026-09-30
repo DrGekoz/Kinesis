@@ -8,17 +8,17 @@ Control Windows with your hands through one webcam. Look at a window and it beco
 
 Built for desks with several monitors, not one.
 
-**11 hand gestures · multi-monitor support · ~46 ms end-to-end · smooth cursor · gaze-targeted windows · chroma-key virtual camera · 70 tests**
+**11 hand gestures · multi-monitor support · ~46 ms end-to-end · smooth cursor · gaze-targeted windows · push-to-talk dictation · chroma-key virtual camera · 73 tests**
 
 <a href="https://github.com/DrGekoz/Kinesis/stargazers"><img src="https://img.shields.io/github/stars/DrGekoz/Kinesis?style=for-the-badge&color=f59e0b" alt="Stars"></a>
 <a href="https://github.com/DrGekoz/Kinesis/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-22c55e?style=for-the-badge" alt="License"></a>
 <img src="https://img.shields.io/badge/platform-Windows-06b6d4?style=for-the-badge" alt="Platform">
 <img src="https://img.shields.io/badge/python-3.11-8b5cf6?style=for-the-badge" alt="Python">
 <img src="https://img.shields.io/badge/latency-~46ms-f43f5e?style=for-the-badge" alt="Latency">
-<img src="https://img.shields.io/badge/tests-70%20passing-22c55e?style=for-the-badge" alt="Tests">
+<img src="https://img.shields.io/badge/tests-73%20passing-22c55e?style=for-the-badge" alt="Tests">
 <img src="https://img.shields.io/badge/virtual%20camera-OBS-8b5cf6?style=for-the-badge" alt="Virtual camera">
 
-[Features](#features) · [Multi-monitor](#multi-monitor-support) · [Gestures](#gesture-reference) · [Gaze](#gaze-your-eyes-pick-the-window) · [Virtual camera](#virtual-camera-stream-while-kinesis-uses-the-camera) · [Latency](#latency) · [Install](#install) · [Config](#configuration) · [Architecture](#architecture) · [Credits](#credits)
+[Features](#features) · [Multi-monitor](#multi-monitor-support) · [Gestures](#gesture-reference) · [Gaze](#gaze-your-eyes-pick-the-window) · [Dictation](#dictation-with-handy) · [Virtual camera](#virtual-camera-stream-while-kinesis-uses-the-camera) · [Latency](#latency) · [Install](#install) · [Config](#configuration) · [Architecture](#architecture) · [Credits](#credits)
 
 </div>
 
@@ -36,6 +36,7 @@ Kinesis is built to be used. Every design decision here came from a concrete fai
 | --- | --- |
 | **Multi-monitor support** | Built with multiple monitors in mind from the first commit — four screens side by side on the development machine. Gestures carry the window *and* the monitor they apply to. |
 | **Gaze-targeted windows** | Eye tracking picks the window your gesture lands on, so you never bring a window forward by hand before gesturing at it. |
+| **Hands-free dictation** | Hold the thumb-and-pinky pose to hold your dictation hotkey. [Handy](https://github.com/cjpais/Handy) — free, open source, fully offline speech-to-text — defaults to `Ctrl+Space` on Windows, so you can write, prompt an LLM or take notes by talking, with almost no keyboard. |
 | **Sub-second latency** | ~46 ms measured end-to-end. The cursor snaps to where your hand is rather than animating its way there. |
 | **A genuinely smooth cursor** | A One-Euro filter removes webcam landmark jitter without paying for it in lag: hard smoothing when your hand is still, near-raw tracking when it moves. |
 | **11 hand gestures** | Left click, right click, double click, drag, adaptive scroll, browser tabs, Alt-Tab, minimise, maximise, fullscreen and push-to-talk. |
@@ -53,7 +54,7 @@ A webcam sees you, not your desk. It has no idea there are four screens in front
 
 **Your eyes track what you're focusing on.** Eye tracking resolves where you are looking to the topmost window under that point, and that window becomes the target of the next hand gesture. No click to focus first, no Alt-Tab to bring it forward — you look at it, then you gesture at it. Keyboard gestures focus the resolved window first and verify the OS actually agreed before sending keys, because a browser will silently ignore `Ctrl+Tab` when it is not the foreground window.
 
-**Your hands tell the PC what to do.** An index finger drives the cursor, thumb pinches click and drag, an open hand swiped sideways moves between tabs, a closed fist manages windows, and a two-handed fist-plus-pinch drives Alt-Tab.
+**Your hands tell the PC what to do.** An index finger drives the cursor, thumb pinches click and drag, an open hand swiped sideways moves between tabs, a closed fist manages windows, a two-handed fist-plus-pinch drives Alt-Tab, and a thumb-and-pinky pose holds your dictation hotkey so you can write by talking.
 
 If gaze is not calibrated, or you are looking elsewhere, the same gestures fall back to the monitor your hand is *pointing at* — hand orientation in 3D, calibrated per screen — and finally to the foreground window. Three ways to decide, in decreasing order of how much you meant it.
 
@@ -76,7 +77,7 @@ If gaze is not calibrated, or you are looking elsewhere, the same gestures fall 
 | Open hand, quick lateral swipe | Previous / next browser tab (`Ctrl+Shift+Tab` / `Ctrl+Tab`) |
 | Open hand → closed fist | Minimise the target window, exiting fullscreen first if it is fullscreen |
 | Closed fist → open hand | Maximise; if already maximised, fullscreen (`f` on YouTube, `F11` anywhere else) |
-| Thumb + pinky out, index/middle/ring curled | Hold `Ctrl+Space` (push-to-talk) for as long as the pose is held |
+| Thumb + pinky out, index/middle/ring curled | Hold `Ctrl+Space` for as long as the pose is held — push-to-talk **dictation** with [Handy](https://github.com/cjpais/Handy), Kinesis's headline combo gesture |
 | **Left** fist held 2 s | Opens Alt-Tab and holds `Alt`; each right-hand pinch taps `Tab` (hold to repeat); opening the left fist commits the switch |
 | `END` key | Quit, releasing everything |
 
@@ -113,6 +114,27 @@ Kinesis ships its own calibration because EyeTrax's own only knows the primary m
 ### Gaze-driven scrolling
 
 Hold your gaze in the top or bottom 12% band of the screen and it scrolls for as long as you keep looking. There is a dwell before it engages (a glance is not a scroll), a ramp to full speed (it does not jerk into motion), and a cooldown after release (it does not flap at the boundary). It stops the instant your gaze leaves the band.
+
+## Dictation with Handy
+
+The thumb-and-pinky pose holds `Ctrl+Space` for as long as you keep the pose, and `Ctrl+Space` is the Windows default **transcribe** binding in [Handy](https://github.com/cjpais/Handy) — a free, open-source, fully offline speech-to-text app (Whisper or Parakeet, running on your own machine, nothing sent to the cloud).
+
+Hold the gesture, talk, release, and the text lands in whatever field has focus:
+
+```
+   thumb + pinky out  ──hold──►  Ctrl+Space down  ──►  Handy records
+        (hand pose)                    (hotkey)              │
+   open the hand      ──release─►  Ctrl+Space up    ──►  transcript pasted into the focused app
+```
+
+This is the point where hand gestures stop being a gimmick and start replacing the keyboard. Writing, prompting an LLM, replying to a message, taking notes in a meeting — all of it becomes one held pose and your voice. Combined with [gaze targeting](#gaze-your-eyes-pick-the-window), you look at the text field you mean and dictate into it without touching a key.
+
+Both sides are configurable:
+
+- In Handy: **Settings → Shortcuts** (its overlay works fine while Kinesis is running).
+- In Kinesis: `ptt_keys`, if you remap Handy's shortcut — `run.bat --tune ptt_keys=ctrl,alt,d --save-config`. Release always releases exactly the keys it pressed, whatever they are, so a remap can never leave a key stuck down.
+
+Handy's other default bindings also work well with Kinesis's window gestures: `Ctrl+Shift+Space` (post-process the transcript with an LLM) and `Ctrl+Shift+D` (Windows/Linux): both are one gesture away.
 
 ## Virtual camera: stream while Kinesis uses the camera
 
@@ -221,6 +243,7 @@ Everything lives in `kinesis_config.json` (written by `--save-config`) and every
 | `flick_window_s` | 0.4 | How fast a fist/open transition must be to count as a flick |
 | `swipe_min_fraction` | 0.16 | Lateral travel needed to register a tab swipe |
 | `alt_tab_hold_s` | 2.0 | How long the left fist must be held to open Alt-Tab |
+| `ptt_keys` | ctrl, space | The dictation hotkey the thumb-and-pinky gesture holds — matches Handy's Windows default |
 | `scroll_gain` / `scroll_adaptive_k` | 1.0 / 1.4 | Scroll speed and how much it accelerates with hand speed |
 | `gaze_target_enabled` | true | Whether gaze picks the target window |
 | `gaze_scroll_mode` / `gaze_scroll_speed` | edge / 480 | Gaze scrolling on/off and how fast |
@@ -310,7 +333,8 @@ Kinesis stands on other people's work, and this is what it owes:
 | --- | --- | --- | --- |
 | [Virtual-Mouse](https://github.com/whitehatboy005/Virtual-Mouse) | whitehatboy005 | **The starting point.** Its approach seeded this project, and its measured failures in front of a real camera defined the problem Kinesis solves. It is vendored unmodified in `vendor/Virtual-Mouse` for the diff and the comparison. | MIT |
 | [EyeTrax](https://github.com/ck-zhang/eyetrax) | ck-zhang | **Gaze estimation.** Feature extraction, ridge-regression gaze model, Kalman/EMA smoothers, and the chroma-keyable green virtual-camera look that the hand overlays are composited onto. Installed as a dependency, driven by Kinesis's own frames. | MIT |
-| [awesome-hand-pose-estimation](https://github.com/xinghaochen/awesome-hand-pose-estimation) | Xinghao Chen | **The research index** used to choose the approach, and the upgrade path held open: HAPTIX (CVPR 2024) and HaMuCo (ICCV 2023) for better 3D pose → better aiming; Deformer (ICCV 2023) for temporal fusion against jitter; FastHand and MobRecon for speed; InterHand2.6M for two-handed work; RHD / FreiHAND / OneHand10K if a custom classifier is ever trained. | — |
+| [awesome-hand-pose-estimation](https://github.com/xinghaochen/awesome-hand-pose-estimation) | Xinghao Chen | **The research index** used to choose the approach, and the upgrade path held open: HAPTIX (CVPR 2024) and HaMuCo (ICCV 2023) for better 3D pose → better aiming; Deformer (ICCV 2023) for temporal fusion against jitter; FastHand and MobRecon for speed; InterHand2.6M for two-handed work; RHD / FreiHand / OneHand10K if a custom classifier is ever trained. | — |
+| [Handy](https://github.com/cjpais/Handy) | CJ Pais | **The dictation partner.** Not code Kinesis links against: the thumb-and-pinky gesture holds `Ctrl+Space`, which is Handy's default transcribe binding on Windows, so offline speech-to-text works with no setup on either side. | MIT |
 | [MediaPipe](https://github.com/google-ai-edge/mediapipe) | Google | Hand landmarks (21 points) and metric world landmarks, plus the face landmarks under EyeTrax. The single biggest piece of the pipeline. | Apache-2.0 |
 | [pyvirtualcam](https://github.com/letmaik/pyvirtualcam) | Maik Riechert | Virtual camera output. Used as an installed dependency, never bundled — it is GPL-2.0 because it links OBS's virtual-camera filter. | GPL-2.0 |
 | [OBS Studio](https://github.com/obsproject/obs-studio) | OBS Project | Provides the "OBS Virtual Camera" DirectShow driver that `pyvirtualcam` writes to. | GPL-2.0 |

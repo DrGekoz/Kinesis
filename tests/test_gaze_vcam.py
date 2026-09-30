@@ -14,11 +14,12 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from kinesis.actions import ActionRunner                          # noqa: E402
 from kinesis.config import Config                                  # noqa: E402
 from kinesis.gestures import GazeScroller, GestureEngine, Intent   # noqa: E402
 from kinesis.pose import HandPose                                  # noqa: E402
 from kinesis.vcam import VirtualCamera, gaze_to_canvas             # noqa: E402
-from kinesis.winapi import virtual_screen                          # noqa: E402
+from kinesis.winapi import enumerate_monitors, virtual_screen     # noqa: E402
 
 OPEN = dict(extended=("index", "middle", "ring", "pinky"), pinches=(), yaw=0.0, pitch=0.0)
 
@@ -247,3 +248,41 @@ def test_vcam_disabled_never_starts():
     cam = VirtualCamera(cfg_with(vcam_enabled=False))
     assert cam.enabled is False
     assert cam.start(30.0) is False
+
+
+# ---------------------------------------------------------------- dictation (Handy)
+def test_ptt_hotkey_is_configurable():
+    """The dictation hotkey must come from config: ctrl+space is Handy's Windows default, but a
+    remap there has to be mirrored here and released as exactly what was pressed."""
+    engine = GestureEngine(cfg_with(ptt_keys=["ctrl", "shift", "d"]))
+    now = 1000.0
+    out = []
+    shaka = make_pose(pose_name="SHAKA", extended=("thumb", "pinky"), pinches=())
+    for _ in range(8):
+        now += 0.05
+        out += engine.update([shaka], None, now, 0.05)
+    downs = [i for i in out if i.kind == "keys.down"]
+    assert downs and downs[0].keys == ("ctrl", "shift", "d"), downs
+    ups = [i for i in engine.release_all(now) if i.kind == "keys.up"]
+    assert ups and ups[0].keys == ("ctrl", "shift", "d"), ups
+
+
+def test_ptt_defaults_to_handys_windows_binding():
+    engine = GestureEngine(Config())
+    assert engine.ptt_keys == ("ctrl", "space")
+
+
+def test_release_all_releases_whatever_was_pressed():
+    """Safety path: the runner must not guess key names. A remapped hotkey released as a hardcoded
+    ctrl+space would leave the real keys stuck down."""
+    runner = ActionRunner(Config(), enumerate_monitors(), dry=True)
+    runner.execute([Intent("keys.down", keys=("ctrl", "shift", "d"))])
+    assert runner._held_keys == ["ctrl", "shift", "d"]
+    released = []
+    original = runner._keys_up
+    runner._keys_up = lambda keys: (released.append(tuple(keys)), original(keys))[1]
+    runner.release_all()
+    # press order, which _keys_up reverses internally so the last key pressed comes up first
+    assert ("ctrl", "shift", "d") in released, f"released {released}"
+    assert runner._held_keys == []
+    assert runner._alt_held is False

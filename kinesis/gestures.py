@@ -92,6 +92,17 @@ class GestureEngine:
         return self._select_hands(poses)[0]
 
     # ------------------------------------------------------------------ helpers
+    @property
+    def ptt_keys(self) -> Tuple[str, ...]:
+        """The dictation hotkey the shaka gesture holds.
+
+        Defaults to ctrl+space, which is the Windows default transcribe binding in Handy
+        (https://github.com/cjpais/Handy) - so push-to-talk dictation works with no setup on either
+        side. Remap `ptt_keys` if Handy's shortcut is changed.
+        """
+        keys = self.cfg["ptt_keys"]
+        return tuple(str(k) for k in keys) if keys else ("ctrl", "space")
+
     def set_frame_size(self, frame_w: int, frame_h: int):
         if frame_w and frame_h:
             self.frame_w, self.frame_h = frame_w, frame_h
@@ -196,14 +207,14 @@ class GestureEngine:
         if self.ptt_held:
             if not shaka:
                 self.ptt_held = False
-                out.append(Intent("keys.up", keys=("ctrl", "space")))
+                out.append(Intent("keys.up", keys=self.ptt_keys))
                 self.last_note = "push-to-talk release"
         elif shaka and self.active is None:
             if self._shaka_since is None:
                 self._shaka_since = now
             elif now - self._shaka_since >= float(self.cfg["ptt_arm_s"]):
                 self.ptt_held = True
-                out.append(Intent("keys.down", keys=("ctrl", "space")))
+                out.append(Intent("keys.down", keys=self.ptt_keys))
                 self.last_note = "push-to-talk hold"
         else:
             self._shaka_since = None
@@ -406,7 +417,7 @@ class GestureEngine:
         if self.alt_held:
             out.append(Intent("keys.up", keys=("alt",)))
         if self.ptt_held:
-            out.append(Intent("keys.up", keys=("ctrl", "space")))
+            out.append(Intent("keys.up", keys=self.ptt_keys))
         self.active = None
         self.alt_held = False
         self.ptt_held = False

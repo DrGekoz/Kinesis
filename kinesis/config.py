@@ -67,7 +67,11 @@ DEFAULTS: Dict[str, Any] = {
     "swipe_cooldown_s": 0.7,
     "alt_tab_hold_s": 2.0,             # left fist held this long opens the switcher
     "alt_tab_repeat_s": 0.35,          # held right pinch repeats Tab
-    "ptt_arm_s": 0.15,                 # shaka must hold this long before Ctrl+Space
+    "ptt_arm_s": 0.15,                 # shaka must hold this long before the dictation hotkey
+    # The push-to-talk hotkey the shaka gesture holds. ctrl+space is the Windows default binding
+    # in Handy (https://github.com/cjpais/Handy), so dictation works with no setup. Mirror any
+    # remap here.
+    "ptt_keys": ["ctrl", "space"],
     "scroll_gain": 1.0,
     "scroll_adaptive": True,
     "scroll_adaptive_k": 1.4,

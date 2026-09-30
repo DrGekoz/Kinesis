@@ -27,6 +27,7 @@ class ActionRunner:
         self._skip_pids = {w.own_process_id()}
         self._wheel_residual = 0
         self._alt_held = False
+        self._held_keys: List[str] = []      # press order; released in reverse
         self.last_action = ""
 
     # ------------------------------------------------------------------ logging
@@ -80,6 +81,8 @@ class ActionRunner:
         for k in keys:
             if k == "alt":
                 self._alt_held = True
+            if k not in self._held_keys:
+                self._held_keys.append(k)
         if not self.dry:
             for k in keys:
                 w.key_down(k)
@@ -89,6 +92,8 @@ class ActionRunner:
         for k in keys:
             if k == "alt":
                 self._alt_held = False
+            if k in self._held_keys:
+                self._held_keys.remove(k)
         if not self.dry:
             for k in reversed(keys):
                 w.key_up(k)
@@ -243,9 +248,16 @@ class ActionRunner:
                 self._note(f"ignored intent {kind}")
 
     def release_all(self):
-        """Safety: nothing may stay held down when the program stops."""
-        self._keys_up(("alt",))
-        self._keys_up(("ctrl", "space"))
+        """Safety: nothing may stay held down when the program stops.
+
+        Releases whatever was actually pressed rather than a hardcoded list - if the dictation
+        hotkey is remapped (`ptt_keys`), a guess here would leave the real keys stuck down.
+        """
+        if self._held_keys:
+            # passed in press order - _keys_up reverses, so the key pressed last is released first
+            self._keys_up(tuple(self._held_keys))
+        self._held_keys.clear()
+        self._alt_held = False
         self._up("left")
         self._up("right")
         self._up("middle")
