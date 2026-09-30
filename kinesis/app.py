@@ -29,19 +29,22 @@ BANNER = r"""
 """
 
 GESTURE_HELP = """
- gesture                     action
- --------------------------  ----------------------------------------------------
- index finger                move cursor (snaps, no easing)
- thumb + index pinch         left click          (twice quickly = double click)
- thumb + middle pinch        right click
- thumb + ring pinch (hold)   adaptive scroll     (hand travel drives the wheel)
- thumb + pinky pinch (hold)  drag                (text selection, file drags)
- open hand -> closed fist    minimise            (exits fullscreen first if needed)
- closed fist -> open hand    maximise / fullscreen  (f = YouTube, F11 = otherwise)
- open hand swipe left/right  previous / next tab  (Ctrl+Shift+Tab / Ctrl+Tab)
- LEFT fist held 2s           hold Alt; right-hand thumb+index pinches tap Tab
- thumb + pinky out (shaka)   hold Ctrl+Space     (push to talk)
- END key                     quit
+ gesture                            action
+ ---------------------------------  --------------------------------------------------
+ index finger                       move cursor (snaps, no easing)
+ thumb + index pinch                left click          (twice quickly = double click)
+ thumb + middle pinch               right click
+ thumb + ring pinch (hold)          drag                (text selection, file drags)
+ both hands pinch, hands apart      zoom in             (Ctrl+=)
+ both hands pinch, hands together   zoom out            (Ctrl+-)
+ RIGHT fist held 0.6s               hold Ctrl; LEFT thumb+index taps Tab (next tab)
+                                    LEFT thumb+middle taps Shift+Tab (previous tab)
+ LEFT fist held 2s                  hold Alt; right-hand thumb+index pinches tap Tab
+ open hand -> closed fist           minimise            (exits fullscreen first if needed)
+ closed fist -> open hand           maximise / fullscreen  (f = YouTube, F11 = otherwise)
+ thumb + pinky out (shaka)          hold Ctrl+Space     (push to talk)
+ gaze (needs calibrate_gaze.bat)    scroll, pick the target window, click browser tabs
+ END key                            quit
 """
 
 
