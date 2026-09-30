@@ -52,8 +52,8 @@ def parse_args():
 
 def make_camera(cfg):
     cap = cv2.VideoCapture(int(cfg["camera_index"]), cv2.CAP_DSHOW)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, int(cfg["capture_width"]))
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, int(cfg["capture_height"]))
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, int(cfg["frame_width"]))
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, int(cfg["frame_height"]))
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     if not cap.isOpened():
         return None
