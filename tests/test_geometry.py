@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from kinesis import geometry as g                                      # noqa: E402
 from kinesis.config import Config                                      # noqa: E402
 from kinesis.gaze import GazeEngine, _LandmarkTap                       # noqa: E402
+from kinesis.winapi import Monitor as RealMonitor                       # noqa: E402
 
 
 # ---------------------------------------------------------------- synthetic EDID
@@ -105,9 +106,10 @@ def test_distance_needs_a_scale():
 
 # ---------------------------------------------------------------- layout
 def _monitor(device, left, top, w, h, primary=False):
-    return SimpleNamespace(device=device, left=left, top=top, right=left + w, bottom=top + h,
-                           width=w, height=h, primary=primary, work=(left, top, left + w, top + h),
-                           centre=(left + w // 2, top + h // 2))
+    """A real Monitor, not a stand-in: using SimpleNamespace here is what let `monitor.index`
+    (an attribute that does not exist) survive into a wizard that crashed on its first run."""
+    return RealMonitor(handle=0, device=device, left=left, top=top, right=left + w,
+                       bottom=top + h, primary=primary, work=(left, top, left + w, top + h))
 
 
 def _hw(mm_w, mm_h, model="X", source="edid-basic"):

@@ -63,8 +63,11 @@ def make_camera(cfg):
         cap.read()
     return cap
 
-def collect_point(root, canvas, hwnd, cap, engine, monitor, target, args, n, total):
-    """Show one dot and sample the eyes while it is on screen."""
+def collect_point(root, canvas, hwnd, cap, engine, monitor, mi, target, args, n, total):
+    """Show one dot and sample the eyes while it is on screen.
+
+    `mi` is the monitor's position in the left-to-right list: Monitor carries no index of its own.
+    """
     tx, ty = target
     w.position_window(hwnd, monitor.left, monitor.top, monitor.width, monitor.height)
     canvas.delete("all")
@@ -72,7 +75,7 @@ def collect_point(root, canvas, hwnd, cap, engine, monitor, target, args, n, tot
     canvas.create_oval(cx - RING_R, cy - RING_R, cx + RING_R, cy + RING_R, outline="#3a3a3a", width=2)
     canvas.create_oval(cx - DOT_R, cy - DOT_R, cx + DOT_R, cy + DOT_R, fill="#ff2a2a", outline="")
     canvas.create_text(monitor.width // 2, RING_R + 60,
-                       text=f"{n}/{total}   monitor {monitor.index + 1}",
+                       text=f"{n}/{total}   monitor {mi + 1}",
                        fill="#4a4a4a", font=("Segoe UI", 15))
     root.update()
 
@@ -97,7 +100,7 @@ def collect_point(root, canvas, hwnd, cap, engine, monitor, target, args, n, tot
         elif is_blink:
             blink += 1
         else:
-            out.append((feats, float(tx), float(ty), monitor.index))
+            out.append((feats, float(tx), float(ty), mi))
         root.update()
     return out, blink, noface, dists
 
@@ -164,7 +167,7 @@ def main() -> int:
     try:
         for n, (mi, pt) in enumerate(targets, 1):
             monitor = monitors[mi]
-            got, blink, noface, dists = collect_point(root, canvas, hwnd, cap, engine, monitor, pt,
+            got, blink, noface, dists = collect_point(root, canvas, hwnd, cap, engine, monitor, mi, pt,
                                                      args, n, len(targets))
             seat_dists.extend(dists)
             note = "" if len(got) >= 5 else "   <-- too few, point skipped"
@@ -192,7 +195,13 @@ def main() -> int:
     y = np.array([[s[1], s[2]] for s in train_samples], dtype=np.float32)
     pred = np.asarray(engine._estimator.predict(X))
     err = np.linalg.norm(pred - y, axis=1)
-    hits = [w.monitor_at(monitors, int(px), int(py)) == w.monitor_at(monitors, int(tx), int(ty))
+    def mon_index(x: float, y: float):
+        hit = w.monitor_at(int(x), int(y), monitors)
+        if hit is None:
+            return None
+        return next((i for i, mm in enumerate(monitors) if mm.device == hit.device), None)
+
+    hits = [mon_index(px, py) == mon_index(tx, ty)
             for (px, py), (_, tx, ty) in zip(pred, train_samples)]
     hit = sum(hits)
     pct = 100.0 * hit / len(train_samples)

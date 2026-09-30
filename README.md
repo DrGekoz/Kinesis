@@ -8,14 +8,14 @@ Control Windows with your hands through one webcam. Look at a window and it beco
 
 Built for desks with several monitors, not one.
 
-**11 hand gestures · desk geometry · multi-monitor support · ~46 ms end-to-end · smooth cursor · gaze-targeted windows · push-to-talk dictation · chroma-key virtual camera · 93 tests**
+**11 hand gestures · desk geometry · multi-monitor support · ~46 ms end-to-end · smooth cursor · gaze-targeted windows · push-to-talk dictation · chroma-key virtual camera · 95 tests**
 
 <a href="https://github.com/DrGekoz/Kinesis/stargazers"><img src="https://img.shields.io/github/stars/DrGekoz/Kinesis?style=for-the-badge&color=f59e0b" alt="Stars"></a>
 <a href="https://github.com/DrGekoz/Kinesis/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-22c55e?style=for-the-badge" alt="License"></a>
 <img src="https://img.shields.io/badge/platform-Windows-06b6d4?style=for-the-badge" alt="Platform">
 <img src="https://img.shields.io/badge/python-3.11-8b5cf6?style=for-the-badge" alt="Python">
 <img src="https://img.shields.io/badge/latency-~46ms-f43f5e?style=for-the-badge" alt="Latency">
-<img src="https://img.shields.io/badge/tests-93%20passing-22c55e?style=for-the-badge" alt="Tests">
+<img src="https://img.shields.io/badge/tests-95%20passing-22c55e?style=for-the-badge" alt="Tests">
 <img src="https://img.shields.io/badge/virtual%20camera-OBS-8b5cf6?style=for-the-badge" alt="Virtual camera">
 
 [Features](#features) · [Multi-monitor](#multi-monitor-support) · [Desk geometry](#desk-geometry) · [Gestures](#gesture-reference) · [Gaze](#gaze-your-eyes-pick-the-window) · [Dictation](#dictation-with-handy) · [Virtual camera](#virtual-camera-stream-while-kinesis-uses-the-camera) · [Latency](#latency) · [Install](#install) · [Config](#configuration) · [Architecture](#architecture) · [Credits](#credits)
@@ -356,13 +356,15 @@ kinesis/
 ## Verification
 
 ```
-.venv\Scripts\python -m pytest tests -q      →  93 passed
+.venv\Scripts\python -m pytest tests -q      →  95 passed
 .venv\Scripts\python tools\verify_actions.py →  16/16 live checks
 ```
 
-**93 deterministic tests** cover all eleven gestures, the pose classifier including rotation invariance, the click/close-flick arbitration, hysteresis and cooldowns, the aim classifier against a real four-monitor layout, the One-Euro filter, deadband, wheel accumulation, gaze edge-scroll (dwell, direction, ramp, stop, cooldown, stale rejection, cursor warp), target and focus carrying, the chroma-green overlay, hand and gaze compositing, release-all safety, and the desk geometry: EDID parsing against a hand-built block laid out to the real spec, FoV-from-diagonal across aspect ratios, the distance round trip, physical row layout with bezels, vertical misalignment, PPI, angular spans, screen selection by angle, seat-drift gating, and the landmark tap turning eye corners into a distance. Landmark geometry is synthesised with exact joint angles (extended finger = collinear = 180°, curled = rotated at the PIP = 70°), so every classification is checked against a known-correct input rather than a recording.
+**95 deterministic tests** cover all eleven gestures, the pose classifier including rotation invariance, the click/close-flick arbitration, hysteresis and cooldowns, the aim classifier against a real four-monitor layout, the One-Euro filter, deadband, wheel accumulation, gaze edge-scroll (dwell, direction, ramp, stop, cooldown, stale rejection, cursor warp), target and focus carrying, the chroma-green overlay, hand and gaze compositing, release-all safety, and the desk geometry: EDID parsing against a hand-built block laid out to the real spec, FoV-from-diagonal across aspect ratios, the distance round trip, physical row layout with bezels, vertical misalignment, PPI, angular spans, screen selection by angle, seat-drift gating, and the landmark tap turning eye corners into a distance. Landmark geometry is synthesised with exact joint angles (extended finger = collinear = 180°, curled = rotated at the PIP = 70°), so every classification is checked against a known-correct input rather than a recording.
 
 **The desk model** is checked against this machine's real hardware: four screens identified by model (a 42" TV, two Lenovo L27i-30 and a Kogan KAMN27F18WA), physical sizes from EDID, 276 cm of active area, angular span and per-screen separation from a 70 cm seat, and the C920's focal length in pixels derived from its listed FoV.
+
+**Two guard tests exist because of bugs that got past the suite**: the gaze wizard called `monitor.index` (Monitor has no index) and passed the arguments to `monitor_at` in the wrong order, so it would have crashed on the first real calibration. The cause was the geometry tests standing in `SimpleNamespace` fakes for `Monitor`, which let a wrong attribute name pass; they now use the real dataclass, and a dedicated guard exercises the helpers that consume it.
 
 **16 live checks** create a real window and drive it through the same ctypes path the gestures use, asserting that the OS actually changed state: `IsIconic`/`IsZoomed` transitions, `SendInput` keys, the YouTube-vs-`F11` fullscreen choice, dry-run logging, wheel-delta accumulation, and gaze-point → window resolution including the title blocklist and a point outside the window.
 
