@@ -5,6 +5,13 @@ All notable changes to Kinesis. The README stays compact on purpose: this is whe
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are
 [semantic](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.1] — the deploy script
+
+- cloudflare/deploy.py: create the D1 database, apply the schema, seed the ten maps, publish the
+  Worker, and print the URL to point the app at. Each step is skipped if it is already done, and a
+  token without permission stops with the reason instead of half-finishing.
+- --status reports what exists without changing anything.
+
 ## [1.12.0] — Gesture-Maps, a marketplace, and the pointer follows your eyes
 
 ### The pointer is driven by gaze
