@@ -92,6 +92,21 @@ DEFAULTS: Dict[str, Any] = {
     "youtube_fs_key": "f",
     "generic_fs_key": "f11",
 
+    # --- desk geometry ---
+    "geometry_enabled": True,          # use camera/monitor physical data in gaze calibration
+    "assumed_distance_mm": 700.0,      # used before a gaze calibration says otherwise
+    "camera_name": "",                 # override the detected camera name (for the FoV table)
+    "camera_fov_deg": 0.0,             # 0 = from the table, else your own diagonal FoV
+    "bezel_mm": 10.0,                  # physical gap between active areas (Windows hides bezels)
+    "monitor_mm_overrides": [],        # [[width_mm, height_mm], ...] per monitor, left to right
+    "scale_reference": "eye_corners",  # eye_corners | ipd - the physical span used for distance
+    "eye_corner_mm": 90.0,             # outer eye corner span; measure yours for better distance
+    "ipd_mm": 63.0,
+    "palm_mm": 90.0,                   # wrist to middle knuckle, for hand distance
+    "distance_warn_fraction": 0.25,    # warn when the seat distance drifts this much
+    "distance_min_mm": 300.0,          # closer than this, gaze is unreliable
+    "distance_max_mm": 1400.0,         # further than this, distance (and gaze) degrade
+
     # --- gaze (EyeTrax) ---
     "gaze_enabled": True,
     "gaze_model_path": "gaze_model.pkl",

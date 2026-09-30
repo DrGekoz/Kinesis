@@ -188,6 +188,42 @@ MONITORENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HMONITOR, wintypes.
                                      ctypes.POINTER(RECT), wintypes.LPARAM)
 
 
+class _DISPLAY_DEVICE(ctypes.Structure):
+    _fields_ = [("cb", wintypes.DWORD), ("DeviceName", wintypes.WCHAR * 32),
+                ("DeviceString", wintypes.WCHAR * 128), ("StateFlags", wintypes.DWORD),
+                ("DeviceID", wintypes.WCHAR * 128), ("DeviceKey", wintypes.WCHAR * 128)]
+
+
+DISPLAY_DEVICE_ATTACHED_TO_DESKTOP = 0x1
+
+
+def display_devices():
+    """Attached displays as (gdi_device, adapter, monitor_name, monitor_id).
+
+    The monitor name and id are what identify the actual panel ("Lenovo L27i-30",
+    "MONITOR\\LEN66BF\\{...}\\0002"), which is how the EDID for each screen is located.
+    """
+    user32.EnumDisplayDevicesW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD,
+                                           ctypes.POINTER(_DISPLAY_DEVICE), wintypes.DWORD]
+    user32.EnumDisplayDevicesW.restype = wintypes.BOOL
+    out = []
+    index = 0
+    while True:
+        adapter = _DISPLAY_DEVICE()
+        adapter.cb = ctypes.sizeof(_DISPLAY_DEVICE)
+        if not user32.EnumDisplayDevicesW(None, index, ctypes.byref(adapter), 0):
+            break
+        index += 1
+        if not (adapter.StateFlags & DISPLAY_DEVICE_ATTACHED_TO_DESKTOP):
+            continue
+        monitor = _DISPLAY_DEVICE()
+        monitor.cb = ctypes.sizeof(_DISPLAY_DEVICE)
+        user32.EnumDisplayDevicesW(adapter.DeviceName, 0, ctypes.byref(monitor), 0)
+        out.append((adapter.DeviceName, adapter.DeviceString,
+                    monitor.DeviceString, monitor.DeviceID))
+    return out
+
+
 def enumerate_monitors(by_position: bool = True) -> List[Monitor]:
     """Live monitor list. Sorted left-to-right by default so index 1 = leftmost,
     which is how a person counting screens thinks about them."""

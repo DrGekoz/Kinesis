@@ -11,6 +11,7 @@ still, and look at each dot.
 from __future__ import annotations
 
 import argparse
+import datetime
 import sys
 import time
 from pathlib import Path
@@ -43,7 +44,8 @@ def grid_points(monitor, count):
 def parse_args():
     ap = argparse.ArgumentParser(description="Kinesis gaze calibration")
     ap.add_argument("--camera", type=int, default=None)
-    ap.add_argument("--points", type=int, default=5, choices=[1, 5, 9], help="points per monitor")
+    ap.add_argument("--points", type=int, default=0, choices=[0, 1, 5, 9],
+                    help="points per monitor; 0 = pick per screen from its angular size")
     ap.add_argument("--monitors", default="", help="e.g. 1,3 to calibrate only those")
     ap.add_argument("--sample", type=float, default=1.0, help="seconds of sampling per point")
     ap.add_argument("--settle", type=float, default=0.7, help="seconds to look before sampling")
@@ -80,21 +82,24 @@ def collect_point(root, canvas, hwnd, cap, engine, monitor, target, args, n, tot
         root.update()
         time.sleep(0.005)
 
-    out, blink, noface = [], 0, 0
+    out, blink, noface, dists = [], 0, 0, []
     end = time.perf_counter() + args.sample
     while time.perf_counter() < end:
         ok, frame = cap.read()
         if not ok:
             continue
         feats, is_blink = engine.features_for(frame)
+        engine.measure_distance(frame)          # uses the landmarks that call just produced
+        if engine.state.distance_mm > 0:
+            dists.append(engine.state.distance_mm)
         if feats is None:
             noface += 1
         elif is_blink:
             blink += 1
         else:
-            out.append((feats, float(tx), float(ty)))
+            out.append((feats, float(tx), float(ty), monitor.index))
         root.update()
-    return out, blink, noface
+    return out, blink, noface, dists
 
 
 def main() -> int:
@@ -114,9 +119,26 @@ def main() -> int:
             print(f"no monitor {i + 1} (found {len(monitors)})")
             return 2
 
-    targets = [(i, pt) for i in idx for pt in grid_points(monitors[i], args.points)]
-    print(f"Kinesis gaze calibration - {len(targets)} points over monitors "
-          f"{', '.join(str(i + 1) for i in idx)}")
+    # ---- desk geometry: which camera, which screens, how big, how far away -------------
+    from kinesis.geometry import build_geometry, angular_span_deg
+    geo = build_geometry(cfg, monitors, int(cfg["frame_width"]), int(cfg["frame_height"]),
+                         distance_mm=float(cfg["assumed_distance_mm"]), distance_source="assumed")
+    print(geo.report())
+    print()
+
+    # more sample points where a screen subtends a wider angle: those are the ones a linear model
+    # gets wrong, and on a 4-screen array they are the outer screens
+    def points_for(i: int) -> int:
+        if args.points:
+            return args.points
+        if geo.distance_mm > 0:
+            lo, hi = angular_span_deg(geo.layout.panels[i], geo.eye_offset_mm, geo.distance_mm)
+            return 9 if (hi - lo) > 30.0 else 5
+        return 5
+
+    targets = [(i, pt) for i in idx for pt in grid_points(monitors[i], points_for(i))]
+    counts = ", ".join(f"{i + 1}:{points_for(i)}pt" for i in idx)
+    print(f"Kinesis gaze calibration - {len(targets)} points ({counts})")
     print("Sit exactly as you normally do. Keep your head still and look at each dot.")
     print("Do not move your head to follow it. Blink between dots, not during them.\n")
 
@@ -125,6 +147,7 @@ def main() -> int:
         print("could not open the camera - close anything else using it and retry")
         return 2
     engine = GazeEngine(cfg)
+    engine.set_camera(geo.camera)      # so the seat distance can be measured while sampling
 
     import tkinter as tk
     root = tk.Tk()
@@ -137,14 +160,17 @@ def main() -> int:
     root.focus_force()
 
     samples = []
+    seat_dists = []
     try:
         for n, (mi, pt) in enumerate(targets, 1):
             monitor = monitors[mi]
-            got, blink, noface = collect_point(root, canvas, hwnd, cap, engine, monitor, pt,
-                                               args, n, len(targets))
+            got, blink, noface, dists = collect_point(root, canvas, hwnd, cap, engine, monitor, pt,
+                                                     args, n, len(targets))
+            seat_dists.extend(dists)
             note = "" if len(got) >= 5 else "   <-- too few, point skipped"
+            seen = f"  {sum(dists) / len(dists) / 10:.0f}cm" if dists else ""
             print(f"  [{n:2d}/{len(targets)}] monitor {mi + 1} at ({int(pt[0])},{int(pt[1])})  "
-                  f"kept {len(got):3d}  blink {blink:3d}  no-face {noface:3d}{note}")
+                  f"kept {len(got):3d}  blink {blink:3d}  no-face {noface:3d}{seen}{note}")
             samples.extend(got)
     finally:
         try:
@@ -157,22 +183,78 @@ def main() -> int:
         print("check that your face is lit and visible to the camera, then run this again")
         return 1
 
-    print(f"\ntraining on {len(samples)} samples...")
-    engine.train(samples)
+    monitor_of = [int(s[3]) for s in samples]
+    train_samples = [(s[0], s[1], s[2]) for s in samples]
+    print(f"\ntraining on {len(train_samples)} samples...")
+    engine.train(train_samples)
 
-    X = np.array([s[0] for s in samples], dtype=np.float32)
-    y = np.array([[s[1], s[2]] for s in samples], dtype=np.float32)
+    X = np.array([s[0] for s in train_samples], dtype=np.float32)
+    y = np.array([[s[1], s[2]] for s in train_samples], dtype=np.float32)
     pred = np.asarray(engine._estimator.predict(X))
     err = np.linalg.norm(pred - y, axis=1)
-    hit = sum(1 for (px, py), (_, tx, ty) in zip(pred, samples)
-              if w.monitor_at(monitors, int(px), int(py)) == w.monitor_at(monitors, int(tx), int(ty)))
-    pct = 100.0 * hit / len(samples)
+    hits = [w.monitor_at(monitors, int(px), int(py)) == w.monitor_at(monitors, int(tx), int(ty))
+            for (px, py), (_, tx, ty) in zip(pred, train_samples)]
+    hit = sum(hits)
+    pct = 100.0 * hit / len(train_samples)
     print(f"in-sample error : mean {err.mean():5.0f} px   median {np.median(err):5.0f} px   "
           f"p90 {np.percentile(err, 90):5.0f} px")
-    print(f"monitor hit rate: {hit}/{len(samples)} = {pct:.1f}%   <- what window targeting uses")
+    print(f"monitor hit rate: {hit}/{len(train_samples)} = {pct:.1f}%   "
+          f"<- what window targeting uses")
+
+    # per-screen, because one bad screen is what ruins targeting in practice
+    per_monitor = {}
+    for mi in sorted(set(monitor_of)):
+        sel = [h for h, m in zip(hits, monitor_of) if m == mi]
+        got = sum(sel)
+        per_monitor[mi] = round(100.0 * got / max(len(sel), 1), 1)
+        print(f"  monitor {mi + 1}: {got}/{len(sel)} = {per_monitor[mi]:.0f}%")
+
+    seat = float(np.median(seat_dists)) if seat_dists else 0.0
+    if seat:
+        print(f"seat distance   : {seat:.0f} mm ({seat / 10:.0f} cm) - recorded so Kinesis can "
+              f"tell you if you move")
+        if geo.distance_mm > 0 and abs(seat - geo.distance_mm) / geo.distance_mm > 0.35:
+            print(f"  (that differs a lot from the {geo.distance_mm:.0f} mm I assumed from the "
+                  f"monitors - the measured value is the one being saved)")
+
     if pct < 85.0:
-        print("that is low - sit stiller, keep the same chair position, and try 9 points per monitor")
+        print("\nthat is low. In order of what usually helps:")
+        print("  1. sit stiller and keep your head level; do not follow the dot with your head")
+        print("  2. sit closer: your screens are only "
+              + (f"{min(geo.separation_deg()):.1f}" if geo.separation_deg() else "a few")
+              + " degrees apart from that seat, which is tight for gaze")
+        print("  3. light your face evenly - a window or lamp behind you wrecks accuracy")
+
+    engine.save_metadata({
+        "trained_at": datetime.datetime.now().isoformat(timespec="seconds"),
+        "samples": len(train_samples),
+        "monitor_hit_rate": round(pct, 1),
+        "per_monitor_hit_rate": {str(k + 1): v for k, v in per_monitor.items()},
+        "distance_mm": round(seat, 1),
+        "distance_source": "measured with the face scale at calibration",
+        "camera": {
+            "index": geo.camera.index, "name": geo.camera.name,
+            "resolution": [geo.camera.width, geo.camera.height],
+            "fov_diagonal_deg": round(geo.camera.diagonal_fov_deg, 1),
+            "fov_horizontal_deg": round(geo.camera.horizontal_fov_deg, 1),
+            "fov_source": geo.camera.fov_source, "focal_px": round(geo.camera.focal_px, 1),
+        },
+        "monitors": [{
+            "index": p.index + 1, "model": p.model, "mm": [round(p.width_mm), round(p.height_mm)],
+            "px": [p.px_w, p.px_h], "size_source": p.size_source,
+            "rect": [monitors[p.index].left, monitors[p.index].top,
+                     monitors[p.index].right, monitors[p.index].bottom],
+        } for p in geo.layout.panels],
+        "layout": {
+            "total_width_mm": round(geo.layout.total_width_mm),
+            "bezel_mm": geo.layout.bezel_mm,
+            "angular_span_deg": [round(v, 1) for v in geo.angular_coverage_deg()],
+            "separation_deg": [round(v, 1) for v in geo.separation_deg()],
+            "vertical_misalignment_mm": round(geo.layout.vertical_misalignment_mm, 1),
+        },
+    })
     print(f"\nsaved -> {engine.model_path}")
+    print(f"saved -> {engine.metadata_path}   (seat distance, camera and layout)")
     print("run run.bat, then look at a window and use a hand gesture on it")
     return 0
 

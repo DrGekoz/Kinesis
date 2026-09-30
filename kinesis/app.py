@@ -55,6 +55,7 @@ class KinesisApp:
                                   dry=cfg["dry_run"] if dry is None else dry)
         self.gaze = GazeEngine(cfg)
         self.gaze_scroller = GazeScroller(cfg)
+        self.geometry = None
         self.vcam = VirtualCamera(cfg, dry=cfg["dry_run"] if dry is None else dry)
         self.hud = Hud(cfg, self.monitors)
         self.preview = bool(cfg["preview"] if preview is None else preview)
@@ -107,6 +108,31 @@ class KinesisApp:
         print(GESTURE_HELP)
 
     # ------------------------------------------------------------------ loop
+    def _build_geometry(self, frame_w: int, frame_h: int):
+        """Work out the physical desk once the camera size is known."""
+        if not bool(self.cfg.get("geometry_enabled", True)):
+            return
+        cal_distance = self.gaze.calibration_distance_mm
+        from .geometry import build_geometry
+        self.geometry = build_geometry(
+            self.cfg, self.monitors, frame_w, frame_h,
+            distance_mm=cal_distance or float(self.cfg["assumed_distance_mm"]),
+            distance_source="gaze calibration" if cal_distance else "assumed")
+        self.aim.set_geometry(self.geometry)
+        self.gaze.set_camera(self.geometry.camera)
+        print(self.geometry.report())
+        stored = self.gaze.load_metadata()
+        if stored:
+            px_now = [p.px_w for p in self.geometry.layout.panels]
+            px_then = [m.get("px", [0])[0] for m in stored.get("monitors", [])]
+            if px_then and px_then != px_now:
+                print("[gaze] the screens are arranged differently to when gaze was calibrated "
+                      "- window targeting may be off, re-run calibrate_gaze.bat")
+            elif stored.get("distance_mm"):
+                print(f"[gaze] calibrated with your eyes {stored['distance_mm']:.0f} mm from the "
+                      f"screen; will warn past "
+                      f"{float(self.cfg['distance_warn_fraction']) * 100:.0f}% drift")
+
     def _resolve_gaze_target(self, gaze, now: float):
         """Turn the gaze point into the window the user is looking at. Rate limited: the window
         walk is an EnumWindows sweep and gaze only refreshes at gaze_hz anyway."""
@@ -143,6 +169,7 @@ class KinesisApp:
         self.gestures.set_frame_size(w0, h0)
         if self.gaze.enabled:
             self.gaze.start()
+        self._build_geometry(w0, h0)     # after gaze.start: the model knows the calibrated seat distance
         cam_fps = self.engine.camera.fps or float(self.cfg["vcam_fps"])
         self.vcam.start(cam_fps)
         time.sleep(0.3)                       # let the threads fill their slots

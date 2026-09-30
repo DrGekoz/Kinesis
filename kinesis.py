@@ -51,6 +51,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="override any setting from kinesis_config.json (repeatable)")
     p.add_argument("--save-config", action="store_true", help="save the tuned config to disk")
     p.add_argument("--list-monitors", action="store_true", help="print monitor layout and exit")
+    p.add_argument("--desk-report", action="store_true",
+                   help="print the physical desk: screens, sizes, camera FoV, seat distance")
     p.add_argument("--check", action="store_true", help="environment self-test and exit")
     return p
 
@@ -137,6 +139,40 @@ def cmd_vcam_test(cfg: Config) -> int:
         return 1
     print("open OBS (or any app) and select 'OBS Virtual Camera' to see it")
     return 0
+
+
+def cmd_desk_report(cfg: Config) -> int:
+    """Print what the desk actually is: screens, their physical sizes, the camera, the seat."""
+    from kinesis import winapi as w
+    from kinesis.geometry import build_geometry
+    from kinesis.gaze import GazeEngine
+
+    monitors = w.enumerate_monitors()
+    gaze = GazeEngine(cfg)
+    distance = gaze.calibration_distance_mm
+    geo = build_geometry(cfg, monitors, int(cfg["frame_width"]), int(cfg["frame_height"]),
+                         distance_mm=distance or float(cfg["assumed_distance_mm"]),
+                         distance_source="gaze calibration" if distance else "assumed")
+    print(geo.report())
+    if not distance:
+        print("\n  (no gaze calibration yet, so the seat distance is a guess - "
+              "run calibrate_gaze.bat)")
+    print("\nwhat the array looks like from that seat:")
+    for p in geo.layout.panels:
+        lo, hi = geo_span(geo, p)
+        print(f"  screen {p.index + 1}: {p.model[:26]:28} "
+              f"{g_centre(geo, p):+6.1f} deg centre, {lo:+6.1f} to {hi:+6.1f} deg")
+    return 0
+
+
+def geo_span(geo, panel):
+    from kinesis.geometry import angular_span_deg
+    return angular_span_deg(panel, geo.eye_offset_mm, geo.distance_mm)
+
+
+def g_centre(geo, panel):
+    from kinesis.geometry import centre_angle_deg
+    return centre_angle_deg(panel, geo.eye_offset_mm, geo.distance_mm)
 
 
 def cmd_check(args, cfg: Config) -> int:
@@ -249,6 +285,8 @@ def main(argv=None) -> int:
 
     cfg = apply_args(args, Config.load())
 
+    if args.desk_report:
+        return cmd_desk_report(cfg)
     if args.check:
         return cmd_check(args, cfg)
 

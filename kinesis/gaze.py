@@ -31,9 +31,39 @@ class GazeState:
     age: float = 999.0          # seconds since the last valid estimate
     raw: Optional[Tuple[float, float]] = None
     face: bool = False          # a face was seen this frame
+    eye_span_px: float = 0.0    # outer eye corners, apparent width in pixels
+    distance_mm: float = 0.0    # estimated distance from the screen (see geometry)
+    distance_ok: bool = True    # within range and close to the calibration distance
+    distance_note: str = ""
 
     def as_point(self) -> Optional[Tuple[int, int]]:
         return (int(self.x), int(self.y)) if self.valid else None
+
+
+class _LandmarkTap:
+    """Records the face-landmarker result EyeTrax already computed.
+
+    EyETrax normalises its features by the outer-eye-corner distance, which is exactly the
+    monocular scale reference needed to estimate how far away the face is - but it does not return
+    it. Intercepting `detect_for_video` gets that quantity from the inference that was happening
+    anyway, instead of running the landmarker a second time every frame.
+
+    Deliberately duck-typed around the model: if EyeTrax changes its internals the tap is simply
+    not installed (see GazeEngine._install_landmark_tap) and distance reporting degrades to
+    "unknown" rather than breaking gaze.
+    """
+
+    def __init__(self, landmarker):
+        self._landmarker = landmarker
+        self.last = None
+
+    def __getattr__(self, item):
+        return getattr(self._landmarker, item)
+
+    def detect_for_video(self, image, timestamp_ms):
+        result = self._landmarker.detect_for_video(image, timestamp_ms)
+        self.last = result
+        return result
 
 
 class GazeEngine:
@@ -53,6 +83,9 @@ class GazeEngine:
         self._last_run = 0.0
         self._interval = 1.0 / max(float(cfg["gaze_hz"]), 1.0)
         self._owner = None
+        self._tap = None
+        self._camera = None
+        self._span_ema = 0.0
         self.error: Optional[str] = None
         # stats
         self.frames = 0
@@ -98,8 +131,117 @@ class GazeEngine:
             # never called from here - the EMA variant needs no tuning pass
             self._smoother = KalmanEMASmoother(make_kalman(),
                                                ema_alpha=float(self.cfg["gaze_ema_alpha"]))
-        print(f"[gaze] model {self.model_path.name} loaded, smoother={kind}")
+        self._install_landmark_tap()
+        print(f"[gaze] model {self.model_path.name} loaded, smoother={kind}"
+              + (f", seat distance at calibration {self.calibration_distance_mm:.0f} mm"
+                 if self.calibration_distance_mm else ""))
         return True
+
+    # ------------------------------------------------------------------ distance
+    @property
+    def metadata_path(self) -> Path:
+        return self.model_path.with_suffix(".json")
+
+    def load_metadata(self) -> dict:
+        """Calibration sidecar: seat distance, camera and layout the model was trained with."""
+        try:
+            import json
+            if self.metadata_path.exists():
+                return json.loads(self.metadata_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+        return {}
+
+    def save_metadata(self, data: dict) -> None:
+        try:
+            import json
+            self.metadata_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        except Exception as exc:                      # pragma: no cover
+            print(f"[gaze] could not write {self.metadata_path.name}: {exc}")
+
+    @property
+    def calibration_distance_mm(self) -> float:
+        return float(self.load_metadata().get("distance_mm", 0.0) or 0.0)
+
+    def set_camera(self, camera) -> None:
+        """The geometry.CameraInfo for the active camera (focal length in pixels)."""
+        self._camera = camera
+
+    @property
+    def state(self) -> GazeState:
+        return self._state
+
+    def measure_distance(self, frame) -> float:
+        """Seat distance from the frame the last feature extraction used.
+
+        Public entry point for the calibration wizard, which drives feature extraction directly
+        rather than through update(). Returns millimetres, or 0 when it cannot tell.
+        """
+        self._update_distance(frame)
+        return self._state.distance_mm
+
+    def _install_landmark_tap(self) -> None:
+        """See _LandmarkTap. Silent no-op if EyeTrax's internals do not match."""
+        try:
+            landmarker = getattr(self._estimator, "_face_landmarker", None)
+            if landmarker is None or isinstance(landmarker, _LandmarkTap):
+                return
+            self._tap = _LandmarkTap(landmarker)
+            self._estimator._face_landmarker = self._tap
+        except Exception:
+            self._tap = None
+
+    def _update_distance(self, frame) -> None:
+        """Estimate seat distance from the eye span the landmarker just measured.
+
+        Zero extra inference: the landmarks come from the tap on EyeTrax's own detect call.
+        """
+        if self._tap is None or self._tap.last is None or self._camera is None:
+            return
+        faces = getattr(self._tap.last, "face_landmarks", None)
+        if not faces:
+            return
+        try:
+            from .geometry import estimate_distance_mm
+            lm = faces[0]
+            h, w = frame.shape[:2]
+            # landmarks 33 / 263 are the outer eye corners in MediaPipe's face mesh, normalised
+            # against different axes, so the span has to be rebuilt in pixels
+            dx = (lm[263].x - lm[33].x) * w
+            dy = (lm[263].y - lm[33].y) * h
+            span = (dx * dx + dy * dy) ** 0.5
+            if span <= 1.0:
+                return
+            self._span_ema = span if not self._span_ema else 0.75 * self._span_ema + 0.25 * span
+            ref = (float(self.cfg["eye_corner_mm"])
+                   if str(self.cfg.get("scale_reference", "eye_corners")) == "eye_corners"
+                   else float(self.cfg["ipd_mm"]))
+            dist = estimate_distance_mm(self._span_ema, self._camera, ref)
+            if dist > 0:
+                self._state.eye_span_px = self._span_ema
+                self._state.distance_mm = (
+                    dist if not self._state.distance_mm
+                    else 0.7 * self._state.distance_mm + 0.3 * dist)
+                self._state.distance_ok, self._state.distance_note = self._distance_verdict(
+                    self._state.distance_mm)
+        except Exception:
+            return
+
+    def _distance_verdict(self, distance_mm: float) -> Tuple[bool, str]:
+        lo = float(self.cfg["distance_min_mm"])
+        hi = float(self.cfg["distance_max_mm"])
+        if distance_mm < lo:
+            return False, f"very close ({distance_mm:.0f} mm) - gaze gets noisy"
+        if distance_mm > hi:
+            return False, f"far away ({distance_mm:.0f} mm) - gaze degrades with distance"
+        cal = self.calibration_distance_mm
+        if cal > 0:
+            drift = abs(distance_mm - cal) / cal
+            limit = float(self.cfg["distance_warn_fraction"])
+            if drift > limit:
+                return False, (f"seat moved {drift * 100:.0f}% since calibration "
+                               f"({cal:.0f} -> {distance_mm:.0f} mm) - recalibrate gaze")
+        return True, ""
 
     def stop(self):
         if self._estimator is not None:
@@ -128,6 +270,7 @@ class GazeEngine:
         except Exception as exc:                     # pragma: no cover
             self.error = f"extract_features failed: {exc}"
             return self._decay(now)
+        self._update_distance(frame)     # free: reads the landmarks that call just produced
         if features is None:
             self.misses += 1
             self._state.face = False
@@ -184,6 +327,7 @@ class GazeEngine:
         if self._estimator is None:
             from eyetrax import GazeEstimator
             self._estimator = GazeEstimator()
+            self._install_landmark_tap()
         return self._estimator.extract_features(frame)
 
     def status_line(self) -> str:
@@ -192,7 +336,12 @@ class GazeEngine:
         if self._estimator is None:
             return f"gaze: not running ({self.error or 'not started'})"
         state = self._state
+        dist = ""
+        if state.distance_mm > 0:
+            dist = f" {state.distance_mm / 10:.0f}cm away"
+            if not state.distance_ok:
+                dist += " (!)"
         if state.valid:
-            return (f"gaze: {int(state.x)},{int(state.y)} age {state.age * 1000:.0f}ms "
-                    f"face {'yes' if state.face else 'no'}")
-        return f"gaze: stale ({state.age:.1f}s) face {'yes' if state.face else 'no'}"
+            return (f"gaze: {int(state.x)},{int(state.y)} age {state.age * 1000:.0f}ms"
+                    f" face {'yes' if state.face else 'no'}{dist}")
+        return (f"gaze: stale ({state.age:.1f}s) face {'yes' if state.face else 'no'}{dist}")

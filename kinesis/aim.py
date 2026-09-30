@@ -15,6 +15,7 @@ from typing import List, Optional, Sequence
 
 from .config import Calibration, MonitorTarget
 from .winapi import Monitor, virtual_screen
+from .geometry import angular_span_deg
 
 HEURISTIC_SPAN_DEG = 70.0
 
@@ -34,6 +35,7 @@ class AimClassifier:
         self.monitors = list(monitors)
         self.calibration = calibration or Calibration()
         self._current: Optional[int] = None
+        self.geometry = None
 
     # ------------------------------------------------------------------ setup
     @property
@@ -53,7 +55,26 @@ class AimClassifier:
         """Apply the configured yaw sign so both modes share one convention."""
         return yaw * float(self.cfg["aim_yaw_sign"]), pitch
 
+    def set_geometry(self, geometry) -> None:
+        """Desk geometry (physical screen sizes and layout) for the heuristic fallback."""
+        self.geometry = geometry
+
     def _heuristic(self, yaw: float, pitch: float) -> AimResult:
+        """Pointing angle -> monitor.
+
+        With desk geometry this is a real triangulation: the pointing angle picks the screen whose
+        physical angular span contains it. Without it, the fallback maps the angle linearly onto
+        the virtual desktop, which is a guess about where the screens are.
+        """
+        if self.geometry is not None and getattr(self.geometry, "known", False):
+            idx = self.geometry.panel_for_angle(yaw)
+            if idx is not None and 0 <= idx < len(self.monitors):
+                spans = [angular_span_deg(p, self.geometry.eye_offset_mm, self.geometry.distance_mm)
+                         for p in self.geometry.layout.panels]
+                inside = spans[idx][0] <= yaw <= spans[idx][1]
+                conf = 0.75 if inside else 0.4
+                return AimResult(idx, conf, "geometry", yaw, pitch)
+
         left, top, width, height = virtual_screen()
         if width <= 0:
             return AimResult(None, 0.0, "none", yaw, pitch)

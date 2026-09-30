@@ -8,17 +8,17 @@ Control Windows with your hands through one webcam. Look at a window and it beco
 
 Built for desks with several monitors, not one.
 
-**11 hand gestures · multi-monitor support · ~46 ms end-to-end · smooth cursor · gaze-targeted windows · push-to-talk dictation · chroma-key virtual camera · 73 tests**
+**11 hand gestures · desk geometry · multi-monitor support · ~46 ms end-to-end · smooth cursor · gaze-targeted windows · push-to-talk dictation · chroma-key virtual camera · 93 tests**
 
 <a href="https://github.com/DrGekoz/Kinesis/stargazers"><img src="https://img.shields.io/github/stars/DrGekoz/Kinesis?style=for-the-badge&color=f59e0b" alt="Stars"></a>
 <a href="https://github.com/DrGekoz/Kinesis/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-22c55e?style=for-the-badge" alt="License"></a>
 <img src="https://img.shields.io/badge/platform-Windows-06b6d4?style=for-the-badge" alt="Platform">
 <img src="https://img.shields.io/badge/python-3.11-8b5cf6?style=for-the-badge" alt="Python">
 <img src="https://img.shields.io/badge/latency-~46ms-f43f5e?style=for-the-badge" alt="Latency">
-<img src="https://img.shields.io/badge/tests-73%20passing-22c55e?style=for-the-badge" alt="Tests">
+<img src="https://img.shields.io/badge/tests-93%20passing-22c55e?style=for-the-badge" alt="Tests">
 <img src="https://img.shields.io/badge/virtual%20camera-OBS-8b5cf6?style=for-the-badge" alt="Virtual camera">
 
-[Features](#features) · [Multi-monitor](#multi-monitor-support) · [Gestures](#gesture-reference) · [Gaze](#gaze-your-eyes-pick-the-window) · [Dictation](#dictation-with-handy) · [Virtual camera](#virtual-camera-stream-while-kinesis-uses-the-camera) · [Latency](#latency) · [Install](#install) · [Config](#configuration) · [Architecture](#architecture) · [Credits](#credits)
+[Features](#features) · [Multi-monitor](#multi-monitor-support) · [Desk geometry](#desk-geometry) · [Gestures](#gesture-reference) · [Gaze](#gaze-your-eyes-pick-the-window) · [Dictation](#dictation-with-handy) · [Virtual camera](#virtual-camera-stream-while-kinesis-uses-the-camera) · [Latency](#latency) · [Install](#install) · [Config](#configuration) · [Architecture](#architecture) · [Credits](#credits)
 
 </div>
 
@@ -36,6 +36,7 @@ Kinesis is built to be used. Every design decision here came from a concrete fai
 | --- | --- |
 | **Multi-monitor support** | Built with multiple monitors in mind from the first commit — four screens side by side on the development machine. Gestures carry the window *and* the monitor they apply to. |
 | **Gaze-targeted windows** | Eye tracking picks the window your gesture lands on, so you never bring a window forward by hand before gesturing at it. |
+| **Desk geometry** | Kinesis learns what your screens physically *are* — models, real sizes from EDID, how they sit in a row, and how far away you are — and uses it to aim the gaze calibration and the pointing maths. `--desk-report` shows what it found. |
 | **Hands-free dictation** | Hold the thumb-and-pinky pose to hold your dictation hotkey. [Handy](https://github.com/cjpais/Handy) — free, open source, fully offline speech-to-text — defaults to `Ctrl+Space` on Windows, so you can write, prompt an LLM or take notes by talking, with almost no keyboard. |
 | **Sub-second latency** | ~46 ms measured end-to-end. The cursor snaps to where your hand is rather than animating its way there. |
 | **A genuinely smooth cursor** | A One-Euro filter removes webcam landmark jitter without paying for it in lag: hard smoothing when your hand is still, near-raw tracking when it moves. |
@@ -63,6 +64,47 @@ If gaze is not calibrated, or you are looking elsewhere, the same gestures fall 
    hand  ──────────────►  which monitor     (pointing angle → nearest calibrated screen)
    fist  ──────────────►  what to do to it  (minimise / maximise / fullscreen / Alt-Tab)
 ```
+
+## Desk geometry
+
+A webcam sees you, not your desk — so Kinesis works out the desk for itself and feeds it into the gaze maths. Everything below runs automatically; `--desk-report` just shows you what it found.
+
+```
+$ run.bat --desk-report
+
+desk geometry:
+  camera 0: HD Pro Webcam C920  640x480  hFoV 65.9 deg (table:c920), focal 494 px
+  4 monitors, 276 cm of active area (+10 mm bezel allowance between them)
+   1. Digital TV                   93.0x53.0 cm   42.1"  52 ppi      1920x1080 (edid-timing)
+   2. Lenovo L27i-30               60.0x34.0 cm   27.2"  81 ppi      1920x1080 (edid-basic)
+   3. KAMN27F18WA                  60.0x33.0 cm   27.0"  82 ppi      1920x1080 (edid-basic)
+   4. Lenovo L27i-30               60.0x34.0 cm   27.2"  81 ppi      1920x1080 (edid-basic)
+  your eyes: 700 mm from the screen (70 cm), assumed
+  angular span of the array from your seat: -69.3 to +52.4 deg
+  angle between adjacent screen centres: 22.1, 41.1, 41.1 deg
+  vertical alignment: aligned
+```
+
+That is a real desk: a 42" TV, two 27" Lenovo panels and a 27" Kogan, nearly 3 metres of active area, all on one GPU. Windows calls two of them "Generic PnP Monitor"; Kinesis reads their EDID and gets the actual models.
+
+**Which camera, and how wide it sees.** Windows does not expose a webcam's field of view, so it is matched by device name against a table of known models (C920/C922 78° diagonal, Brio 90°, C270 60°, …), then read as horizontal/vertical for *your* capture aspect — 78° diagonal on a 4:3 frame is 66° across, not 78. Unknown camera? It assumes a documented 68° and says so. Set `camera_fov_deg` if you know better, or `camera_name` if the detection picked the wrong device (Oculus and OBS virtual cameras enumerate alongside real ones).
+
+**Which monitors, and how big they are.** Each screen's EDID is read from the registry, keyed by the vendor+product code Windows reports per display. Physical size comes from the basic display parameters, falling back to the preferred timing descriptor, falling back to an estimate from the resolution — and the report always tells you which of those it used. From that: diagonal inches and true PPI per screen.
+
+**How they sit.** Screens are laid out as a physical row in millimetres, with `bezel_mm` (default 10) between active areas because Windows snaps monitors edge-to-edge and knows nothing about bezels. Vertical offsets come from the pixel arrangement, so a screen sitting 12 cm lower is reported as misaligned rather than silently ignored.
+
+**How far away you are.** Monocular, from the apparent width of your eyes: the outer eye corners span ~90 mm, the camera's focal length is known in pixels from its FoV, so distance = focal × 90 mm ÷ measured span. Accurate to roughly ±15%, which is plenty for the things it is used for. Measure your own eye span and set `eye_corner_mm` (or switch `scale_reference` to `ipd` and set your pupil distance) to tighten it. The measurement costs nothing: it is read from the face landmarks EyeTrax already computes, not a second model.
+
+**What the geometry actually changes.**
+
+- **Calibration is planned, not uniform.** Each screen gets sample points according to the angle it subtends from your seat — wide or off-axis screens get 9 points, narrow ones 5 — because those wide-angle screens are the ones a linear model gets wrong. The point count per screen is printed before you start.
+- **Your seat distance is measured during calibration and recorded** next to the model. At runtime Kinesis keeps measuring it, and tells you when you have drifted far enough that the model is stale (`distance_warn_fraction`, default 25%): *"seat moved 34% since calibration (600 → 804 mm) — recalibrate gaze"*.
+- **Per-screen hit rates, not just an overall score.** One bad screen is what actually ruins targeting, so each screen reports its own percentage.
+- **It warns when your screens are too close in angle to tell apart** from where you sit — under 8° between adjacent screen centres, gaze discrimination gets unreliable and the report says so instead of letting you wonder why targeting keeps picking the wrong window.
+- **It notices when the hardware changed.** If the screens are arranged differently to when gaze was calibrated, startup says so.
+- **Pointing uses real triangulation.** The hand's pointing angle is matched against each screen's true angular span instead of being mapped linearly across a guessed ±70° range.
+
+Honest limits, since this is inference rather than measurement: the FoV comes from a table (an unknown camera falls back to a documented default), the seat distance is monocular, bezel width is an assumption, and gaze accuracy falls off for screens more than ~45° off-axis — at which point the fix is to sit further back, and the report tells you the numbers.
 
 ## Gesture reference
 
@@ -98,6 +140,7 @@ Two consequences worth knowing:
 
 - Keyboard gestures (tab swipes, Alt-Tab) need a *focused* window, so Kinesis focuses the gaze target first and verifies the OS actually agreed before sending keys. A browser ignores `Ctrl+Tab` when it is not foreground, and without that verification the gesture would look like it worked while doing nothing.
 - The mouse wheel goes to the window under the **cursor**, so gaze scrolling parks the cursor on the gaze point first. Turn that off with `gaze_scroll_warp_cursor: false`.
+- Kinesis keeps measuring how far away your face is the whole time, and says so when your seat has drifted far enough that the model no longer applies. No other gesture system tells you that its calibration has gone stale.
 
 Calibrate it once; re-run it only if you move your chair:
 
@@ -107,7 +150,19 @@ calibrate_gaze.bat --points 9      more points, better accuracy
 calibrate_gaze.bat --monitors 3    only the screen you actually work on
 ```
 
-It prints the in-sample pixel error and the **monitor hit rate** — the number that decides whether targeting works. Below ~85% means your head moved during it.
+It prints the in-sample pixel error and the **monitor hit rate** — the number that decides whether targeting works. Below ~85% means your head moved during it. It also prints a per-screen hit rate, and the seat distance it measured while you were looking at the dots (see [Desk geometry](#desk-geometry)) — which is what lets Kinesis tell you later that you have moved far enough for the model to go stale.
+
+```
+$ calibrate_gaze.bat
+
+in-sample error : mean   142 px   median   118 px   p90   290 px
+monitor hit rate: 402/430 = 93.5%   <- what window targeting uses
+  monitor 1: 84/90 = 93%
+  monitor 2: 106/110 = 96%
+  monitor 3: 122/130 = 94%
+  monitor 4: 90/100 = 90%
+seat distance   : 664 mm (66 cm) - recorded so Kinesis can tell you if you move
+```
 
 Kinesis ships its own calibration because EyeTrax's own only knows the primary monitor, and its screen size comes from `screeninfo`'s first monitor. Dots are therefore placed across the whole virtual desktop on a borderless topmost window positioned with `SetWindowPos` — Tk's geometry strings cannot express a negative origin (a leading `-` means "from the right edge"), which would have silently put calibration dots on the wrong screens.
 
@@ -250,6 +305,14 @@ Everything lives in `kinesis_config.json` (written by `--save-config`) and every
 | `gaze_scroll_warp_cursor` | true | Park the cursor on the gaze point so the wheel lands correctly |
 | `vcam_mode` / `vcam_width` | passthrough / 640x480 | Virtual camera mode and size |
 | `aim_hysteresis_deg` / `aim_max_distance_deg` | 7 / 42 | Aim switching margin and the gate beyond which aim is unknown |
+| `geometry_enabled` | true | Use camera/monitor physical data for gaze and pointing |
+| `camera_name` / `camera_fov_deg` | (auto) / 0 | Override the detected camera, or its diagonal FoV (0 = use the model table) |
+| `bezel_mm` | 10 | Physical gap between active areas — Windows snaps monitors edge-to-edge and knows nothing about bezels |
+| `assumed_distance_mm` | 700 | Seat distance used until a gaze calibration measures it |
+| `scale_reference` / `eye_corner_mm` / `ipd_mm` | eye_corners / 90 / 63 | What physical span the distance estimate uses, and how wide yours is |
+| `distance_warn_fraction` | 0.25 | How much the seat can drift before the gaze model counts as stale |
+| `distance_min_mm` / `distance_max_mm` | 300 / 1400 | Range outside which gaze is flagged as unreliable |
+| `monitor_mm_overrides` | (none) | Physical size per screen if the EDID lies |
 
 ## Design notes
 
@@ -276,7 +339,10 @@ kinesis/
   tracking.py   capture thread (newest frame only) + inference thread + per-hand filtering
   filters.py    One-Euro filter (scalar and per-landmark 2D)
   pose.py       joint-angle finger states, pose classification, 3D pointing angles
-  aim.py        calibrated / heuristic monitor classification with hysteresis
+  aim.py        calibrated / heuristic monitor classification with hysteresis, triangulated
+                against real screen geometry when it is known
+  geometry.py   desk model: camera FoV, EDID monitor sizes, physical row layout, seat distance,
+                angular spans - pure geometry, degrades to estimates when the hardware is shy
   gestures.py   pose-transition state machine -> intents, plus the gaze edge-scroller
                 (no Windows calls: fully testable)
   actions.py    intents -> Windows actions, gaze/aim window targeting, focus-before-keyboard,
@@ -290,17 +356,19 @@ kinesis/
 ## Verification
 
 ```
-.venv\Scripts\python -m pytest tests -q      →  70 passed
+.venv\Scripts\python -m pytest tests -q      →  93 passed
 .venv\Scripts\python tools\verify_actions.py →  16/16 live checks
 ```
 
-**70 deterministic tests** cover all eleven gestures, the pose classifier including rotation invariance, the click/close-flick arbitration, hysteresis and cooldowns, the aim classifier against a real four-monitor layout, the One-Euro filter, deadband, wheel accumulation, gaze edge-scroll (dwell, direction, ramp, stop, cooldown, stale rejection, cursor warp), target and focus carrying, the chroma-green overlay, hand and gaze compositing, and release-all safety. Landmark geometry is synthesised with exact joint angles (extended finger = collinear = 180°, curled = rotated at the PIP = 70°), so every classification is checked against a known-correct input rather than a recording.
+**93 deterministic tests** cover all eleven gestures, the pose classifier including rotation invariance, the click/close-flick arbitration, hysteresis and cooldowns, the aim classifier against a real four-monitor layout, the One-Euro filter, deadband, wheel accumulation, gaze edge-scroll (dwell, direction, ramp, stop, cooldown, stale rejection, cursor warp), target and focus carrying, the chroma-green overlay, hand and gaze compositing, release-all safety, and the desk geometry: EDID parsing against a hand-built block laid out to the real spec, FoV-from-diagonal across aspect ratios, the distance round trip, physical row layout with bezels, vertical misalignment, PPI, angular spans, screen selection by angle, seat-drift gating, and the landmark tap turning eye corners into a distance. Landmark geometry is synthesised with exact joint angles (extended finger = collinear = 180°, curled = rotated at the PIP = 70°), so every classification is checked against a known-correct input rather than a recording.
+
+**The desk model** is checked against this machine's real hardware: four screens identified by model (a 42" TV, two Lenovo L27i-30 and a Kogan KAMN27F18WA), physical sizes from EDID, 276 cm of active area, angular span and per-screen separation from a 70 cm seat, and the C920's focal length in pixels derived from its listed FoV.
 
 **16 live checks** create a real window and drive it through the same ctypes path the gestures use, asserting that the OS actually changed state: `IsIconic`/`IsZoomed` transitions, `SendInput` keys, the YouTube-vs-`F11` fullscreen choice, dry-run logging, wheel-delta accumulation, and gaze-point → window resolution including the title blocklist and a point outside the window.
 
 **The virtual camera** is verified against the real device: 45 frames sent synchronously at 28.4 fps plus 30 through the threaded publish path, 0 dropped, to "OBS Virtual Camera".
 
-Not machine-verifiable, and honestly so: whether the pinch threshold suits *your* hand at *your* distance, and whether the Alt-Tab hold feels right. Those are `--tune` values, and calibrations are the point of `calibrate.bat` and `calibrate_gaze.bat`.
+Not machine-verifiable, and honestly so: whether the pinch threshold suits *your* hand at *your* distance, whether the Alt-Tab hold feels right, and how accurate the gaze model is for your eyes — the distance estimate is monocular (±15%) and the FoV comes from a table. Those are `--tune` values and `eye_corner_mm` / `camera_fov_deg` overrides, and calibrations are the point of `calibrate.bat` and `calibrate_gaze.bat`.
 
 ## Troubleshooting
 
@@ -312,6 +380,10 @@ Not machine-verifiable, and honestly so: whether the pinch threshold suits *your
 | The cursor jitters | Lower `filter_min_cutoff` to 1.2 and raise `deadband_px` to 2.5. |
 | The cursor feels laggy | Raise `filter_beta`, or set `filter: false` for raw landmarks. |
 | Gestures act on the wrong window | Run `calibrate_gaze.bat` and check the reported monitor hit rate; if gaze is uncalibrated, run `calibrate.bat` for aiming. |
+| Gaze keeps picking the neighbouring screen | `run.bat --desk-report` and look at the angle between adjacent screen centres. Under ~8° the screens are too close together *from where you sit* — sit further back (a bigger angle per screen) or use `--monitors` to restrict gaze to the screens you actually work on. |
+| Gaze accuracy was fine and now is not | Kinesis says so in the log when your seat has drifted more than `distance_warn_fraction`. Move the chair back or re-run `calibrate_gaze.bat`. |
+| The desk report has the wrong screen sizes | That monitor's EDID did not carry a size (it would say `estimate`). Set `monitor_mm_overrides` or `--tune bezel_mm=` to match your desk. |
+| The desk report names the wrong camera | Cameras enumerate in DirectShow order (Oculus and OBS virtual cameras appear too). Set `camera_name` and `camera_fov_deg` explicitly. |
 | Tab swipes do nothing | The target browser window was not focused. Kinesis focuses and verifies first, so check `focus FAILED` lines in the log. |
 | No "OBS Virtual Camera" device | Install OBS Studio, run it once, and click Start Virtual Camera. |
 | Handedness is inverted | Set `handedness_mirror: true` — MediaPipe reports handedness for a mirrored image, and the preview shows what it thinks each hand is. |
