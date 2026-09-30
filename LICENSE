@@ -19,9 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-Kinesis depends on third-party projects that carry their own licences; see the
-Credits section of README.md. Notably pyvirtualcam and OBS Studio are GPL-2.0,
-which is why pyvirtualcam is an installed dependency rather than bundled code.

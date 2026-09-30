@@ -320,6 +320,8 @@ Kinesis stands on other people's work, and this is what it owes:
 
 Nothing from any of these applies input to your machine. Every action Kinesis takes is its own, through `SendInput` and `SetCursorPos`.
 
+Per-dependency licence detail, including which ones are GPL-2.0 and why they are installed rather than bundled: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
