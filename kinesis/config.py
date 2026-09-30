@@ -191,6 +191,24 @@ DEFAULTS: Dict[str, Any] = {
     "claw_minimise": True,
     "claw_travel_px": 140.0,           # how far the hand must travel for it to count
     "claw_window_s": 1.2,              # and how quickly, before it was just a slow move
+    # Maximise / fullscreen is the second exit from the SAME five-digit pinch: instead of dragging
+    # it, SPREAD it - all four fingertips leaving the thumb together.
+    #
+    # Measured, not guessed: a relaxed release of a claw and a deliberate five-finger spread end in
+    # geometrically the same place (the slowest fingertip sits 1.58 hand-scales from the thumb when
+    # you let go, 1.63 when you spread), and mean fingertip width does not separate them either
+    # (2.08 relaxed, 1.57-2.62 depending on spread radius). There is NO static threshold that tells
+    # them apart, because letting go of a claw IS opening your hand.
+    #
+    # So the discriminator is not the ending, it is the START: the claw must have been HELD first.
+    # `claw_settle_s` requires the five-digit pinch to be steady for that long before a spread means
+    # anything, and `claw_spread_frames` requires the spread itself to be a single decisive event
+    # rather than a drift. A hand that was mid-gesture - swiping, clicking, coming out of a
+    # transition - cannot pass through a settled claw on the way somewhere else.
+    "claw_spread": True,
+    "claw_spread_margin": 0.45,        # extra hand-scales past pinch_off that every tip must clear
+    "claw_spread_frames": 2,           # the spread must read across this many frames, not one
+    "claw_settle_s": 0.18,             # hold the claw this long first, or it was never a claw
     "ring_confirm_frames": 2,          # ring pinch must hold this long before whatever it is bound
                                        # to starts (was scroll_confirm_frames)
     "drag_confirm_frames": 2,          # thumb-pinky drag must hold this long too (also keeps

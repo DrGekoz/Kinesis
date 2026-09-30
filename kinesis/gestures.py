@@ -15,7 +15,8 @@ import math
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple
 
-from .pose import POSE_FIST, POSE_OPEN, POSE_SHAKA, HandPose
+from .pose import (FINGER_JOINTS, POSE_FIST, POSE_OPEN, POSE_SHAKA, THUMB_TIP,  # noqa: F401
+                   HandPose)
 from .winapi import virtual_screen
 
 PX_PER_SCROLL_CLICK = 40.0
@@ -117,6 +118,10 @@ class GestureEngine:
         self._claw_t0 = 0.0
 
         self._claw_fired = False
+
+        self._claw_spread_frames = 0
+
+        self._claw_spread_active = False
         self._left_fist_since: Optional[float] = None
         self._t_tab = 0.0
         self._shaka_since: Optional[float] = None
@@ -252,6 +257,48 @@ class GestureEngine:
             return False
         return True
 
+    def _claw_spread(self, primary: HandPose, aim_index, target_hwnd, now: float) -> List[Intent]:
+        """Did a claw end by SPREADING the fingers apart? That is the maximise gesture.
+
+        There is no static threshold that separates this from letting go (measured: the slowest
+        fingertip is 1.58 hand-scales from the thumb when you relax, 1.63 when you deliberately
+        spread), so the caller only reaches here if the claw was HELD for `claw_settle_s` first -
+        a hand passing through a pinch on its way somewhere else never qualifies. On top of that
+        the fingers must be genuinely clear of the thumb (`pinch_off` plus a margin) across
+        `claw_spread_frames` consecutive frames, so a single noisy frame cannot fire it.
+
+        `window_only` is deliberate: no gaze target means no maximise, exactly as for minimise.
+        """
+        if not primary.points_px:
+            self._claw_spread_frames = 0
+            self._claw_spread_active = False
+            return []
+        pts = primary.points_px
+        thumb = pts[THUMB_TIP]
+        scale = float(primary.scale) or 1.0
+        clear = float(self.cfg["pinch_off"]) + abs(float(self.cfg["claw_spread_margin"]))
+        worst = min(math.hypot(pts[joints[2]][0] - thumb[0], pts[joints[2]][1] - thumb[1]) / scale
+                    for name, joints in FINGER_JOINTS.items() if name != "thumb")
+        if worst < clear:
+            self._claw_spread_frames = 0
+            self._claw_spread_active = False
+            self.last_note = "claw release (not a spread)"
+            return []
+        self._claw_spread_frames += 1
+        need = max(int(self.cfg["claw_spread_frames"]), 1)
+        if self._claw_spread_frames < need:
+            self.last_note = "claw spreading"
+            return []
+        self._claw_spread_frames = 0
+        self._claw_spread_active = False
+        if target_hwnd is None:
+            self.last_note = "claw spread ignored - not looking at a window"
+            return []
+        self._take_lock("claw", now)
+        self.last_note = "claw spread -> maximise"
+        return [Intent("window.maximise", monitor=aim_index, target_hwnd=target_hwnd,
+                       window_only=True, note="claw spread")]
+
     def _confirm(self, key: str, value: bool, need: int = CONFIRM_FRAMES) -> bool:
         n = self._counters.get(key, 0)
         n = n + 1 if value else 0
@@ -363,11 +410,12 @@ class GestureEngine:
         elif fist_conf:
             self._t_fist = now
 
-        # ---------------- claw drag: minimise / maximise ----------------
-        # Pinch everything (all four fingertips to the thumb) and drag down to minimise, up to
-        # maximise. It cannot be confused with the fist, so it can never fire during an alt-tab,
-        # and it is ignored outright when the gaze is not over a window - acting on whatever
-        # happens to have focus is what made the old gesture so destructive.
+        # ---------------- claw: pinch-all -> drag (minimise) or spread (maximise) ----------------
+        # Pinch everything (all four fingertips to the thumb) and then either drag it down to
+        # minimise, or spread it open to maximise. It cannot be confused with the fist, so it can
+        # never fire during an alt-tab, and it is ignored outright when the gaze is not over a
+        # window - acting on whatever happens to have focus is what made the old gesture so
+        # destructive.
         claw = bool(self.cfg["claw_minimise"]) and all(
             pinches.get(finger) for finger in ("index", "middle", "ring", "pinky"))
         if claw and self.active is None and not self.alt_held and not self.ctrl_held \
@@ -377,6 +425,8 @@ class GestureEngine:
                 self._claw_y0 = float(primary.palm_px[1])
                 self._claw_t0 = now
                 self._claw_fired = False
+                self._claw_spread_frames = 0      # a new claw never inherits a stale spread count
+                self._claw_spread_active = False   # nor a pending spread latch from the last one
             elif not self._claw_fired:
                 travel = float(primary.palm_px[1]) - self._claw_y0
                 if (now - self._claw_t0) <= float(self.cfg["claw_window_s"]) \
@@ -395,6 +445,21 @@ class GestureEngine:
                         self.last_note = ("claw drag -> "
                                           + ("minimise" if going_down else "maximise"))
         elif not claw:
+            # The claw ended. Did every fingertip leave the thumb at once (a SPREAD = maximise), or
+            # did the hand just relax?
+            #
+            # This has to keep evaluating for several frames AFTER the pinch breaks, so the test
+            # cannot be gated on `self._claw_active` - that flag is cleared on this very frame, which
+            # would cap the check at a single frame and make `claw_spread_frames` unsatisfiable.
+            # `_claw_spread_active` is the latch that carries "a settled claw just ended" forward.
+            if self._claw_spread_active and bool(self.cfg["claw_spread"]):
+                out.extend(self._claw_spread(primary, aim_index, target_hwnd, now))
+            elif self._claw_active and not self._claw_fired and bool(self.cfg["claw_spread"]) \
+                    and (now - self._claw_t0) >= float(self.cfg["claw_settle_s"]):
+                # first frame past the break: latch it so the spread can be confirmed over the
+                # frames that follow
+                self._claw_spread_active = True
+                out.extend(self._claw_spread(primary, aim_index, target_hwnd, now))
             self._claw_active = False
             self._claw_fired = False
             self._claw_y0 = 0.0
@@ -899,6 +964,14 @@ class GestureEngine:
         self._pending_release = None
         self._swipe_samples.clear()
         self._swipe_until = 0.0
+        # A spread latch left live through a hand loss would fire a maximise on the first frame of
+        # the next hand - which may be pointing somewhere else entirely.
+        self._claw_active = False
+        self._claw_fired = False
+        self._claw_spread_frames = 0
+        self._claw_spread_active = False
+        self._claw_y0 = 0.0
+        self._claw_t0 = 0.0
         if reason:
             self.last_note = f"released ({reason})"
         return out

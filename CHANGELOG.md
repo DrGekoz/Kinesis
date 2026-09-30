@@ -5,6 +5,77 @@ All notable changes to Kinesis. The README stays compact on purpose: this is whe
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are
 [semantic](https://semver.org/spec/v2.0.0.html).
 
+## [1.14.0] — the claw spreads to maximise
+
+### What changed
+
+The claw already **was** a five-digit pinch — all four fingertips in contact with the thumb. So
+maximise needed no new entry pose, only a second way out of the same one:
+
+| Start | Exit | Action |
+| --- | --- | --- |
+| Pinch all five, hold | drag **down** | Minimise |
+| Pinch all five, hold | **spread** the fingers apart | Maximise / fullscreen |
+
+### Why the gesture needed a settle gate, not just a threshold
+
+The obvious implementation — "the claw ended and all four fingertips are now clear of the thumb" —
+does not work, and the reason is worth recording because it is not obvious until measured:
+
+**A relaxed release and a deliberate spread end in geometrically the same place.**
+
+| Measurement (hand-scales) | Relaxed release | Deliberate spread |
+| --- | --- | --- |
+| Slowest fingertip from the thumb | 1.58 | 1.63 |
+| Mean fingertip-to-fingertip width | 2.08 | 1.57 – 2.62 depending on spread radius |
+
+There is no threshold that separates them, in either metric, because *letting go of a claw is
+opening your hand*. A naive implementation maximises a window every single time anyone relaxes
+after a minimise — which would have been worse than the bug it replaced.
+
+So the discriminator is not the **ending**, it is the **start**: the five-digit pinch must have
+been *held* before a spread means anything.
+
+    claw_spread          true     the gesture exists
+    claw_settle_s        0.18     hold the claw this long first, or it was never a claw
+    claw_spread_frames   2        the spread must read across this many frames, not one
+    claw_spread_margin   0.45     extra hand-scales past pinch_off every fingertip must clear
+
+A hand passing through a pinch on its way somewhere else — coming out of a click, a transition, a
+swipe — cannot pass through a *settled* claw to get there. `window_only` still applies: no gaze
+target, no maximise.
+
+### Bugs found while building it
+
+Two real ones, both caught by instrumenting rather than reasoning:
+
+1. **`_claw_spread_frames` was unreachable.** The `elif not claw:` branch resets the claw's own
+   state on the same frame it calls `_claw_spread()`, so a counter incremented inside that call
+   was wiped before it could reach 2. `claw_spread_frames=2` was literally unsatisfiable and the
+   gesture fired *never*. Fixed by not clearing the counter on that frame.
+2. **A second reset made it unwinnable anyway.** The spread test was gated on `self._claw_active`,
+   which is cleared on the first frame past the break — so only frame 1 was ever evaluated. The
+   spread has to be confirmed over frames *after* the pinch breaks, so it needed its own latch,
+   `_claw_spread_active`, carrying "a settled claw just ended" forward.
+
+`release_all()` now clears the spread latch, counter and claw state. A latch left live through a
+hand loss would fire a maximise on the first frame of the *next* hand — pointing somewhere else
+entirely. That is the exact failure mode the settle gate exists to prevent, so it must not survive
+an exit.
+
+### Tests
+
+280 pass (7 new). The two that matter most are negative:
+
+- `test_a_claw_that_never_settled_cannot_spread` — a 2-frame pinch then a spread maximises nothing
+- `test_hand_loss_clears_a_pending_spread` — a stale latch cannot fire for an unrelated hand
+
+`build_hand()` gained `spread_hand()`, because the claw helper clusters the touching tips into a
+bunch that is geometrically impossible on a real hand (index and pinky are over a scale apart), so a
+spread could not be produced by relaxing it.
+
+21/21 live action checks, 12/12 overlay checks.
+
 ## [1.13.1] — a window action with no gaze target now does nothing
 
 ### The bug

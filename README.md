@@ -52,7 +52,7 @@ Built for desks with several monitors, not one. Your eyes track what you are foc
 | Both hands index-thumb pinch, together | Zoom out (`Ctrl+-`) |
 | Right fist held + left middle pinch | Previous browser tab (`Ctrl+Shift+Tab`) |
 | Claw (all four fingertips on the thumb), dragged **down** | Minimise the window you are looking at (exiting fullscreen first). **Does nothing if your eyes are not on a window** — it never guesses at whatever has focus |
-| Claw, dragged **up** | Maximise; if maximised, fullscreen (`f` on YouTube, `F11` elsewhere) |
+| Claw, then **spread** the fingers apart | Maximise; if maximised, fullscreen (`f` on YouTube, `F11` elsewhere) |
 | Thumb + pinky out, other three curled | Hold `Ctrl+Space` — push-to-talk dictation |
 | **Left** fist held 2 s | Opens Alt-Tab and holds `Alt`; each right-hand pinch taps `Tab`; opening the left fist commits |
 | `END` | Quit, releasing everything |
@@ -301,6 +301,7 @@ Everything lives in `kinesis_config.json` and every key can be overridden live w
 | `zoom_keys_in` / `zoom_keys_out` | ctrl+= / ctrl+- | The keys the zoom sends |
 | `ctrl_tab_hold_s` / `ctrl_tab_repeat_s` | 0.6 / 0.35 | Right-fist hold to open Ctrl-Tab, and the re-tap rate |
 | `claw_minimise` / `claw_travel_px` / `claw_window_s` | true / 140 / 1.2 | The claw drag: on, how far the palm must travel, and how fast |
+| `claw_spread` / `claw_settle_s` / `claw_spread_frames` | true / 0.18 / 2 | Pinch-all then spread to maximise: on, how long the claw must be held first, and how many frames the spread must read across |
 | `ctrl_tab_flick_guard` | two_hands | Legacy no-op, kept so old configs load — the flick it guarded is gone |
 | `swipe_action` | none | The old lateral-swipe tab binding — replaced, off by default |
 | `ptt_keys` | ctrl, space | The dictation hotkey the shaka holds |
@@ -347,7 +348,7 @@ Everything lives in `kinesis_config.json` and every key can be overridden live w
 ## Verification
 
 ```bat
-.venv\Scripts\python -m pytest tests -q       273 passed
+.venv\Scripts\python -m pytest tests -q       280 passed
 .venv\Scripts\python tools\verify_actions.py  21/21 live OS checks
 .venv\Scripts\python tools\verify_overlay.py  12/12 against the real compositor
 .venv\Scripts\python tools\check_tabs.py      tab-strip detection against your open browsers
@@ -358,7 +359,7 @@ Everything lives in `kinesis_config.json` and every key can be overridden live w
 check.bat                                     all of the above, in order
 ```
 
-273 tests cover every gesture, the pose classifier, the click/fist arbitration, gesture locking, the
+280 tests cover every gesture, the pose classifier, the click/fist arbitration, gesture locking, the
 Alt-Tab session, gaze targeting and focus, desk geometry against a hand-built EDID block, overlay
 rendering, and release-all safety — with landmark geometry synthesised at exact joint angles rather
 than recorded, so each classification is checked against a known-correct input.

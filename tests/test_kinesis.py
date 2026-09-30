@@ -114,6 +114,32 @@ def build_hand(cx=0.5, cy=0.62, extended=("index", "middle", "ring", "pinky"),
     return [pts[i] for i in range(21)]
 
 
+def spread_hand(cx=0.5, cy=0.62, scale=SCALE):
+    """21 landmarks for a deliberate five-finger SPREAD: a claw whose fingertips have been pushed
+    apart to `spread` hand-scales from their centre.
+
+    The claw helper clusters the touching tips into a tight bunch, which is geometrically impossible
+    on a real hand (index and pinky are over a scale apart). So the spread pose cannot be produced
+    by relaxing `build_hand` - it needs its own explicit geometry, exactly as a real spread does.
+    """
+    pts = dict(enumerate(build_hand(cx=cx, cy=cy, extended=(), thumb="in",
+                                    pinches=("index", "middle", "ring", "pinky"), scale=scale)))
+    order = ("index", "middle", "ring", "pinky")
+    tips = {"index": 8, "middle": 12, "ring": 16, "pinky": 20}
+    bx = sum(pts[t][0] for t in tips.values()) / 4.0
+    by = sum(pts[t][1] for t in tips.values()) / 4.0
+    for n, finger in enumerate(order):
+        t = tips[finger]
+        a = math.radians(90.0 + 180.0 * n / 4.0)
+        pts[t] = (bx + SPREAD_RADIUS * scale * math.cos(a),
+                  by + SPREAD_RADIUS * scale * math.sin(a))
+    pts[4] = (bx, by)                     # thumb stays in the middle of the spread
+    return [pts[i] for i in range(21)]
+
+
+SPREAD_RADIUS = 1.3       # hand-scales from the thumb to the furthest fingertip when spread
+
+
 def _rotate_about(p, origin, deg):
     v = (p[0] - origin[0], p[1] - origin[1])
     r = _rot(v, deg)
@@ -438,6 +464,137 @@ def test_aimed_monitor_reaches_the_action(cfg):
     d.feed([make_pose(cfg, **CLAW, palm=(0.5, 0.30))], steps=3, aim=3, target_hwnd=555)
     d.clear().feed([make_pose(cfg, **CLAW, palm=(0.5, 0.80))], steps=8, aim=3, target_hwnd=555)
     assert d.of("window.minimise")[0].monitor == 3
+
+
+# ============================================================ claw spread -> maximise
+def _spread_pts():
+    return build_hand(cx=0.5, cy=0.30, extended=(), thumb="in",
+                      pinches=("index", "middle", "ring", "pinky"))
+
+
+def _landmarks_to_spread(dt=0.033, settle_frames=8, spread_frames=3, target=555):
+    """Hold a claw long enough to settle, then spread. Returns the intents produced."""
+    engine = GestureEngine(Config(), FRAME)
+    det = PoseDetector(Config())
+    now = 1000.0
+    out = []
+    for _ in range(settle_frames):
+        now += dt
+        pose = det.update(_spread_pts(), "Right", *FRAME, None)
+        out += engine.update([pose], 2, now, dt, target_hwnd=target)
+    for _ in range(spread_frames):
+        now += dt
+        pose = det.update(spread_hand(cx=0.5, cy=0.30), "Right", *FRAME, None)
+        out += engine.update([pose], 2, now, dt, target_hwnd=target)
+    return out
+
+
+def test_claw_spread_maximises(cfg):
+    """Pinch all five, hold, then spread the fingers apart: maximise."""
+    out = _landmarks_to_spread()
+    maxes = [i for i in out if i.kind == "window.maximise"]
+    assert maxes, f"a five-finger spread did not maximise: {[i.kind for i in out]}"
+    assert maxes[0].target_hwnd == 555
+    assert maxes[0].window_only, "the spread must never fall back to the focused window"
+    assert not [i for i in out if i.kind == "window.minimise"]
+
+
+def test_a_spread_with_no_gaze_target_does_nothing(cfg):
+    out = _landmarks_to_spread(target=None)
+    assert not [i for i in out if i.kind in ("window.minimise", "window.maximise")], \
+        f"maximised with no window under the gaze: {[i.kind for i in out]}"
+
+
+def test_a_claw_that_never_settled_cannot_spread(cfg):
+    """The point of the settle gate: a hand merely PASSING THROUGH a pinch on its way somewhere
+    else must never maximise. This is the case that cannot be caught by a distance threshold."""
+    engine = GestureEngine(Config(), FRAME)
+    det = PoseDetector(Config())
+    now = 1000.0
+    out = []
+    # two frames of claw - nowhere near claw_settle_s (0.18s = ~6 frames - then spread
+    for _ in range(2):
+        now += 0.033
+        pose = det.update(_spread_pts(), "Right", *FRAME, None)
+        out += engine.update([pose], 2, now, 0.033, target_hwnd=555)
+    for _ in range(4):
+        now += 0.033
+        pose = det.update(spread_hand(cx=0.5, cy=0.30), "Right", *FRAME, None)
+        out += engine.update([pose], 2, now, 0.033, target_hwnd=555)
+    assert not [i for i in out if i.kind == "window.maximise"], \
+        "an unsettled pinch spread into a maximise"
+
+
+def test_a_spread_needs_more_than_one_frame(cfg):
+    """A single frame of the spread must not be enough - noise does that constantly."""
+    out = _landmarks_to_spread(spread_frames=1)
+    assert not [i for i in out if i.kind == "window.maximise"], \
+        "one noisy frame fired a maximise"
+
+
+def test_the_spread_can_be_turned_off(cfg):
+    c = Config()
+    c.set("claw_spread", False)
+    engine = GestureEngine(c, FRAME)
+    det = PoseDetector(c)
+    now = 1000.0
+    out = []
+    for _ in range(8):
+        now += 0.033
+        pose = det.update(_spread_pts(), "Right", *FRAME, None)
+        out += engine.update([pose], 2, now, 0.033, target_hwnd=555)
+    for _ in range(3):
+        now += 0.033
+        pose = det.update(spread_hand(cx=0.5, cy=0.30), "Right", *FRAME, None)
+        out += engine.update([pose], 2, now, 0.033, target_hwnd=555)
+    assert not [i for i in out if i.kind == "window.maximise"], "claw_spread=false still spread"
+
+
+def test_hand_loss_clears_a_pending_spread(cfg):
+    """A spread latch left live through a hand loss would fire a maximise on the first frame of
+    the NEXT hand - which is pointing somewhere else entirely."""
+    engine = GestureEngine(Config(), FRAME)
+    det = PoseDetector(Config())
+    now = 1000.0
+    for _ in range(8):
+        now += 0.033
+        pose = det.update(_spread_pts(), "Right", *FRAME, None)
+        engine.update([pose], 2, now, 0.033, target_hwnd=555)
+    # one frame of spread starts the confirmation, then the hand vanishes
+    now += 0.033
+    pose = det.update(spread_hand(cx=0.5, cy=0.30), "Right", *FRAME, None)
+    engine.update([pose], 2, now, 0.033, target_hwnd=555)
+    engine.update([], 2, now + 0.033, 0.033, target_hwnd=555)      # hand lost
+    assert engine._claw_spread_active is False
+    assert engine._claw_spread_frames == 0
+    # and a fresh unrelated hand must not inherit it
+    out = []
+    for _ in range(4):
+        now += 0.033
+        pose = det.update(build_hand(cx=0.5, cy=0.30, extended=("index",)),
+                          "Right", *FRAME, None)
+        out += engine.update([pose], 2, now, 0.033, target_hwnd=555)
+    assert not [i for i in out if i.kind == "window.maximise"], \
+        "a stale spread latch maximised a window for an unrelated hand"
+
+
+def test_releasing_a_claw_back_into_a_plain_open_hand_is_not_a_spread(cfg):
+    """Relaxing a claw looks geometrically identical to spreading it, so the settle gate and the
+    `window_only` contract are the only things standing between this and a maximise on every
+    release. This test documents that the open-hand release stays silent."""
+    engine = GestureEngine(Config(), FRAME)
+    det = PoseDetector(Config())
+    now = 1000.0
+    out = []
+    for _ in range(8):
+        now += 0.033
+        pose = det.update(_spread_pts(), "Right", *FRAME, None)
+        out += engine.update([pose], 2, now, 0.033, target_hwnd=None)
+    for _ in range(6):
+        now += 0.033
+        pose = det.update(build_hand(cx=0.5, cy=0.30), "Right", *FRAME, None)
+        out += engine.update([pose], 2, now, 0.033, target_hwnd=None)
+    assert not [i for i in out if i.kind in ("window.minimise", "window.maximise")]
 
 
 # ============================================================ gestures: clicks
