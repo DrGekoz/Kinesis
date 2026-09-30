@@ -151,7 +151,10 @@ click/close-flick arbitration, hysteresis and cooldowns, the aim classifier agai
 four-monitor layout, the One-Euro filter, deadband, wheel accumulation and release-all safety.
 
 `tests/_diag_windows.py` is a manual diagnostic that dumps every visible window with its monitor,
-z-order flags and fullscreen state.
+z-order flags and fullscreen state. `tools/verify_actions.py` is a live check of the OS action
+layer: it creates its own window, drives it through the same ctypes path the gestures use
+(minimise/restore/maximise/key injection), asserts the OS really changed state, and verifies the
+dry-run logging, the YouTube-vs-F11 key choice and wheel-delta accumulation. 13/13 pass.
 
 ## Provenance
 
