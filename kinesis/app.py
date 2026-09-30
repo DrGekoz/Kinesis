@@ -11,6 +11,7 @@ from . import winapi as w
 from .actions import ActionRunner
 from .aim import AimClassifier
 from .config import Calibration, Config, load_calibration
+from .desktop_overlay import DesktopOverlay
 from .gaze import GazeEngine
 from .gestures import GazeScroller, GestureEngine
 from .hud import Hud
@@ -57,6 +58,10 @@ class KinesisApp:
         self.gaze_scroller = GazeScroller(cfg)
         self.geometry = None
         self.vcam = VirtualCamera(cfg, dry=cfg["dry_run"] if dry is None else dry)
+        self.desktop_overlay = DesktopOverlay(cfg, self.monitors, lambda: self.gaze.state)
+        self._gaze_dwell_hwnd = None
+        self._gaze_dwell_since = 0.0
+        self._gaze_focus_at = 0.0
         self.hud = Hud(cfg, self.monitors)
         self.preview = bool(cfg["preview"] if preview is None else preview)
         self._stop = False
@@ -150,6 +155,37 @@ class KinesisApp:
         self._gaze_target = hwnd
         return hwnd
 
+    def _gaze_focus(self, hwnd, now: float) -> None:
+        """Looking at a window for a moment makes it the focused window.
+
+        Gaze already decides which window a *gesture* acts on; this is the other half - bringing the
+        window you are looking at to the front, so typing and the keyboard land there too. Dwell
+        gated and cooled down so it cannot fight the user.
+        """
+        if not bool(self.cfg["gaze_focus_enabled"]) or not hwnd:
+            self._gaze_dwell_hwnd = None
+            self._gaze_dwell_since = 0.0
+            return
+        if hwnd != self._gaze_dwell_hwnd:
+            self._gaze_dwell_hwnd = hwnd
+            self._gaze_dwell_since = now
+            return
+        if (now - self._gaze_dwell_since) < float(self.cfg["gaze_focus_dwell_s"]):
+            return
+        if (now - self._gaze_focus_at) < float(self.cfg["gaze_focus_cooldown_s"]):
+            return
+        if w.user32.GetForegroundWindow() == hwnd:
+            self._gaze_focus_at = now
+            return
+        info = w.window_info(hwnd, self.monitors)
+        if info is None or info.process_id in {w.own_process_id()}:
+            return
+        if bool(self.cfg["gaze_focus_skip_fullscreen"]) and info.is_fullscreen:
+            return
+        ok = w.focus_and_verify(hwnd, allow_alt_trick=not self.runner.alt_held)
+        self._gaze_focus_at = now
+        self.last_action = f"gaze focus {'ok' if ok else 'failed'}: {info.title[:36]}"
+
     def _publish_vcam(self, frame, poses, gaze) -> None:
         if not self.vcam.enabled:
             return
@@ -170,6 +206,17 @@ class KinesisApp:
         if self.gaze.enabled:
             self.gaze.start()
         self._build_geometry(w0, h0)     # after gaze.start: the model knows the calibrated seat distance
+        if self.gaze.enabled and not self.gaze.is_calibrated:
+            print("[gaze] NOT CALIBRATED - eye tracking cannot pick the target window yet.")
+            print("[gaze] run calibrate_gaze.bat once (~40 seconds of looking at dots), then start "
+                  "Kinesis again.")
+        if self.desktop_overlay.enabled:
+            if self.desktop_overlay.start():
+                print(f"[overlay] drawing on the desktop: {self.desktop_overlay.style}/"
+                      f"{self.desktop_overlay.theme}, {self.desktop_overlay.fps:.0f} fps, "
+                      f"press {str(self.cfg['desktop_overlay_hotkey']).upper()} to hide/show")
+            else:
+                print(f"[overlay] unavailable: {self.desktop_overlay.error}")
         cam_fps = self.engine.camera.fps or float(self.cfg["vcam_fps"])
         self.vcam.start(cam_fps)
         time.sleep(0.3)                       # let the threads fill their slots
@@ -183,6 +230,7 @@ class KinesisApp:
                 # gaze is fed the raw (unmirrored) frame the estimator was calibrated on
                 gaze_state = self.gaze.update(self.engine.raw_frame(), now)
                 target_hwnd = self._resolve_gaze_target(gaze_state, now)
+                self._gaze_focus(target_hwnd, now)
 
                 primary = self.gestures.primary_hand(poses)
                 aim = None
@@ -255,7 +303,9 @@ class KinesisApp:
               f"inference {stats.inference_fps:5.1f} fps / {stats.inference_ms:4.1f} ms | "
               f"end-to-end avg {avg:4.0f} ms peak {top:4.0f} ms"
               + (f" | gaze {self.gaze.status_line()} | vcam {self.vcam.status_line()}"
-                 if self.gaze.enabled or self.vcam.enabled else ""))
+                 if self.gaze.enabled or self.vcam.enabled else "")
+              + (f" | {self.desktop_overlay.status_line()}"
+                if self.desktop_overlay.enabled else ""))
 
     def shutdown(self):
         self.gaze_scroller.release()
@@ -266,6 +316,7 @@ class KinesisApp:
         except Exception:
             pass
         self.vcam.stop()
+        self.desktop_overlay.stop()
         self.gaze.stop()
         self.engine.stop()
         if self.preview:

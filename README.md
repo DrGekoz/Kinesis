@@ -8,17 +8,17 @@ Control Windows with your hands through one webcam. Look at a window and it beco
 
 Built for desks with several monitors, not one.
 
-**11 hand gestures · desk geometry · multi-monitor support · ~46 ms end-to-end · smooth cursor · gaze-targeted windows · push-to-talk dictation · chroma-key virtual camera · 117 tests**
+**11 hand gestures · gesture locking · desk geometry · multi-monitor support · ~46 ms end-to-end · gaze-targeted windows · desktop overlay · push-to-talk dictation · virtual camera · 134 tests**
 
 <a href="https://github.com/DrGekoz/Kinesis/stargazers"><img src="https://img.shields.io/github/stars/DrGekoz/Kinesis?style=for-the-badge&color=f59e0b" alt="Stars"></a>
 <a href="https://github.com/DrGekoz/Kinesis/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-22c55e?style=for-the-badge" alt="License"></a>
 <img src="https://img.shields.io/badge/platform-Windows-06b6d4?style=for-the-badge" alt="Platform">
 <img src="https://img.shields.io/badge/python-3.11-8b5cf6?style=for-the-badge" alt="Python">
 <img src="https://img.shields.io/badge/latency-~46ms-f43f5e?style=for-the-badge" alt="Latency">
-<img src="https://img.shields.io/badge/tests-117%20passing-22c55e?style=for-the-badge" alt="Tests">
+<img src="https://img.shields.io/badge/tests-134%20passing-22c55e?style=for-the-badge" alt="Tests">
 <img src="https://img.shields.io/badge/virtual%20camera-OBS-8b5cf6?style=for-the-badge" alt="Virtual camera">
 
-[Features](#features) · [Multi-monitor](#multi-monitor-support) · [Desk geometry](#desk-geometry) · [Gestures](#gesture-reference) · [Gaze](#gaze-your-eyes-pick-the-window) · [Overlay styles](#overlay-styles) · [Dictation](#dictation-with-handy) · [Virtual camera](#virtual-camera-stream-while-kinesis-uses-the-camera) · [Latency](#latency) · [Install](#install) · [Config](#configuration) · [Architecture](#architecture) · [Credits](#credits)
+[Features](#features) · [Multi-monitor](#multi-monitor-support) · [Desk geometry](#desk-geometry) · [Gestures](#gesture-reference) · [Gesture locking](#one-gesture-at-a-time) · [Gaze](#gaze-your-eyes-pick-the-window) · [Overlay styles](#overlay-styles) · [Desktop overlay](#on-your-actual-desktop) · [Dictation](#dictation-with-handy) · [Virtual camera](#virtual-camera-stream-while-kinesis-uses-the-camera) · [Latency](#latency) · [Install](#install) · [Config](#configuration) · [Credits](#credits)
 
 </div>
 
@@ -132,12 +132,76 @@ Every window action is aimed: "minimise" acts on the window you were looking at,
 - While `Alt` is held by the two-handed gesture, a right-hand pinch is a `Tab` and never a click.
 - Scroll, drag and swipe take ownership of the cursor while active, and only one held action runs at a time — a swipe cannot drag a file and a scroll cannot click.
 
+## One gesture at a time
+
+The first version read gestures out of each other's tails, and it was the single biggest source of
+"it did the wrong thing". Releasing a scroll, for instance, sweeps the hand up through the open-hand
+pose with lateral motion — which is *exactly* what the tab swipe looks for. Same for the Alt-Tab
+modifier: a left fist held while the right hand left the frame was promoted to the cursor hand, and
+its fist pose then fired the close-flick at whatever had focus.
+
+So a gesture now **takes the hand**:
+
+- When a gesture starts, it holds the hand until the hand opens again (4+ fingers), or the hand
+  leaves the frame, or a 6 s safety timeout fires — a hand pose can never wedge the engine.
+- While it holds, no other gesture may start. The held gesture's own continuation still runs, so a
+  scroll keeps scrolling and an armed click still commits.
+- Two exceptions exist because the alternatives are worse: a **fist** ends a click window
+  immediately (closing a hand into a fist sweeps through a pinch, and that sweep has to reach the
+  minimise), and a **click** resolves on pinch release rather than a full open (otherwise
+  double-click could never work).
+- The swipe cooldown restarts when the lock is released, so the motion that follows letting go
+  cannot be mistaken for a swipe.
+
+Scrolling also got its own hardening: the ring pinch must hold for 2 frames before scrolling starts,
+a pinch that flickers off for a frame or two no longer ends a scroll in progress, the hand position
+is smoothed on that axis (hand jitter reads as scrolling otherwise), and the deadband is
+configurable. Alt-Tab gained a latched session, Tab on the pinch's rising edge (the first pinch used
+to be swallowed by the repeat timer), a 30 s session timeout, and a guaranteed Alt release.
+
+## On your actual desktop
+
+The gaze overlay is also drawn **on the real desktop**, over everything, with no window frame and no
+focus stealing — one click-through window per monitor:
+
+```
+run.bat --overlay-desktop                     draw it over the desktop
+run.bat --overlay-desktop --vcam-style heatmap_comet --vcam-theme cyan
+run.bat                                        config default (desktop_overlay: false)
+```
+
+- **Click-through.** `WS_EX_TRANSPARENT` means every click and every scroll passes straight to
+  whatever is underneath. You cannot click the overlay, because it is not a target.
+- **Never steals focus.** `WS_EX_NOACTIVATE` plus `WS_EX_TOOLWINDOW`.
+- **Real per-pixel transparency.** `WS_EX_LAYERED` with `UpdateLayeredWindow` and a premultiplied
+  BGRA bitmap — Windows composites it, so the glow blends with whatever is behind it rather than
+  sitting in a black box.
+- **Only where you are looking.** Each monitor has its own trail buffer; the marker is stamped only
+  on the screen your gaze is actually on, while the others keep fading out.
+- **Press INSERT** to hide or show it at runtime (`desktop_overlay_hotkey`).
+
+Tailoring: `desktop_overlay_style` / `desktop_overlay_theme` (blank = follow the virtual camera's),
+`desktop_overlay_fps` (30), `desktop_overlay_scale` (6 — this path renders coarser than the virtual
+camera because it redraws continuously), and `desktop_overlay_panels_per_tick` (2 — the other panels
+keep decaying, so a round-robin costs nothing visible).
+
+Verified against the real compositor rather than by eye: `tools/verify_overlay.py` checks the
+extended window styles are exactly layered + click-through + topmost + no-activate, that the window
+covers its monitor, that `UpdateLayeredWindow` accepts the bitmap, that colour is premultiplied
+(never brighter than its alpha), that the DIB is mostly fully transparent, and that a trail exists
+rather than a single dot — **12/12**, at ~10 ms per tick.
+
 ## Gaze: your eyes pick the window
 
 Eye tracking (via [EyeTrax](#credits)) decides the **target window**. Look at a window, make a hand gesture, and the gesture applies to that window rather than to whatever happens to have focus. Across four screens this is the difference between a gesture system that works and one you give up on, because you no longer have to bring a window forward by hand first.
 
 Two consequences worth knowing:
 
+- **Looking at a window brings it forward.** Dwell on a window for `gaze_focus_dwell_s` (0.7 s) and
+  Kinesis focuses it, so the keyboard, typing and scrolling land where you are looking — not just
+  gestures. It skips windows that already have focus, has a cooldown so it cannot thrash, ignores
+  full-screen windows by default, and never focuses Kinesis's own windows. Set
+  `gaze_focus_enabled: false` to keep gaze purely as a gesture target.
 - Keyboard gestures (tab swipes, Alt-Tab) need a *focused* window, so Kinesis focuses the gaze target first and verifies the OS actually agreed before sending keys. A browser ignores `Ctrl+Tab` when it is not foreground, and without that verification the gesture would look like it worked while doing nothing.
 - The mouse wheel goes to the window under the **cursor**, so gaze scrolling parks the cursor on the gaze point first. Turn that off with `gaze_scroll_warp_cursor: false`.
 - Kinesis keeps measuring how far away your face is the whole time, and says so when your seat has drifted far enough that the model no longer applies. No other gesture system tells you that its calibration has gone stale.
@@ -354,6 +418,19 @@ Everything lives in `kinesis_config.json` (written by `--save-config`) and every
 | `vcam_glow` | 1.15 | Bloom strength; 0 disables the blur pass |
 | `vcam_heat_radius` / `vcam_heat_gain` | 26 / 1.35 | Heatmap stamp size and contrast |
 | `vcam_visual_scale` | 3 | Render layers at 1/N and upscale on composite (cost vs quality) |
+| `gesture_lock` | true | One gesture owns the hand until the hand opens again |
+| `gesture_lock_open_fingers` | 4 | How open the hand must be to release it |
+| `gesture_lock_timeout_s` | 6.0 | Safety: a held pose can never wedge the engine |
+| `scroll_confirm_frames` / `drag_confirm_frames` | 2 / 2 | Frames a pinch must hold before it starts |
+| `scroll_release_frames` | 3 | Pinch flicker that must not end a scroll |
+| `scroll_deadband_px` / `scroll_smooth` | 1.5 / 0.45 | Jitter floor and EMA on the scrolling hand |
+| `alt_tab_session_timeout_s` | 30.0 | Alt is force-released after this |
+| `gaze_focus_enabled` / `gaze_focus_dwell_s` | true / 0.7 | Focus the window you look at, after this dwell |
+| `gaze_focus_cooldown_s` | 1.5 | Minimum gap between gaze-driven focus changes |
+| `gaze_focus_skip_fullscreen` | true | Never yank a full-screen window out of the way |
+| `desktop_overlay` | false | Draw the overlay on the desktop itself |
+| `desktop_overlay_fps` / `desktop_overlay_scale` | 30 / 6 | Overlay refresh and render resolution |
+| `desktop_overlay_hotkey` | insert | Hide/show the desktop overlay |
 | `aim_hysteresis_deg` / `aim_max_distance_deg` | 7 / 42 | Aim switching margin and the gate beyond which aim is unknown |
 | `geometry_enabled` | true | Use camera/monitor physical data for gaze and pointing |
 | `camera_name` / `camera_fov_deg` | (auto) / 0 | Override the detected camera, or its diagonal FoV (0 = use the model table) |
@@ -400,6 +477,8 @@ kinesis/
   gaze.py       EyeTrax wrapped around Kinesis's own frames: rate-limited, smoothed, persisted model
   gazevis.py    the overlay renderer: decay buffer + bloom + heatmap + themes + Pillow text tiles
                 (numpy/OpenCV only, no OS calls)
+  desktop_overlay.py  one click-through layered window per monitor, premultiplied BGRA through
+                UpdateLayeredWindow - the overlay on your actual desktop
   vcam.py       virtual camera: passthrough and chroma-keyable overlay, on its own sender thread
   hud.py        preview overlay (pose, aim, gaze, target window, action, fps, latency)
   app.py        wiring + main loop
@@ -408,11 +487,13 @@ kinesis/
 ## Verification
 
 ```
-.venv\Scripts\python -m pytest tests -q      →  117 passed
+.venv\Scripts\python -m pytest tests -q      →  134 passed
 .venv\Scripts\python tools\verify_actions.py →  16/16 live checks
+.venv\Scripts\python tools\verify_overlay.py →  12/12 live checks
+.venv\Scripts\python tools\bench_overlay.py  →  per-style compose cost
 ```
 
-**117 deterministic tests** cover all eleven gestures, the pose classifier including rotation invariance, the click/close-flick arbitration, hysteresis and cooldowns, the aim classifier against a real four-monitor layout, the One-Euro filter, deadband, wheel accumulation, gaze edge-scroll (dwell, direction, ramp, stop, cooldown, stale rejection, cursor warp), target and focus carrying, the chroma-green overlay, hand and gaze compositing, release-all safety, and the desk geometry: EDID parsing against a hand-built block laid out to the real spec, FoV-from-diagonal across aspect ratios, the distance round trip, physical row layout with bezels, vertical misalignment, PPI, angular spans, screen selection by angle, seat-drift gating, and the landmark tap turning eye corners into a distance. Landmark geometry is synthesised with exact joint angles (extended finger = collinear = 180°, curled = rotated at the PIP = 70°), so every classification is checked against a known-correct input rather than a recording.
+**134 deterministic tests** cover all eleven gestures, the pose classifier including rotation invariance, the click/close-flick arbitration, hysteresis and cooldowns, the aim classifier against a real four-monitor layout, the One-Euro filter, deadband, wheel accumulation, gaze edge-scroll (dwell, direction, ramp, stop, cooldown, stale rejection, cursor warp), target and focus carrying, the chroma-green overlay, hand and gaze compositing, release-all safety, the gesture exclusivity lock (holding until open, the fist escape, the timeout, the release-sweep cannot swipe), the Alt-Tab session (rising-edge Tab, no clicks, ends on the fist opening, times out), the left-fist guard, gaze-dwell focus (dwell, restart on change, cooldown, already-focused, losing the target), and the desk geometry: EDID parsing against a hand-built block laid out to the real spec, FoV-from-diagonal across aspect ratios, the distance round trip, physical row layout with bezels, vertical misalignment, PPI, angular spans, screen selection by angle, seat-drift gating, and the landmark tap turning eye corners into a distance. Landmark geometry is synthesised with exact joint angles (extended finger = collinear = 180°, curled = rotated at the PIP = 70°), so every classification is checked against a known-correct input rather than a recording.
 
 **The desk model** is checked against this machine's real hardware: four screens identified by model (a 42" TV, two Lenovo L27i-30 and a Kogan KAMN27F18WA), physical sizes from EDID, 276 cm of active area, angular span and per-screen separation from a 70 cm seat, and the C920's focal length in pixels derived from its listed FoV.
 
@@ -436,6 +517,10 @@ Not machine-verifiable, and honestly so: whether the pinch threshold suits *your
 | The cursor jitters | Lower `filter_min_cutoff` to 1.2 and raise `deadband_px` to 2.5. |
 | The cursor feels laggy | Raise `filter_beta`, or set `filter: false` for raw landmarks. |
 | Gestures act on the wrong window | Run `calibrate_gaze.bat` and check the reported monitor hit rate; if gaze is uncalibrated, run `calibrate.bat` for aiming. |
+| Gestures do the wrong thing (swipe instead of scroll, window minimises while Alt-Tabbing) | That is what gesture locking is for — check it is on (`gesture_lock: true`). The log line in the preview says which gesture holds the hand. |
+| Scrolling jumps or fights you | `scroll_smooth` up (0.6), `scroll_deadband_px` up, or `scroll_gain` down. `run.bat --tune scroll_gain=0.8 --save-config`. |
+| Alt-Tab isn't switching windows | Hold the left fist for the full 2 s (`alt_tab_hold_s`), then pinch index-to-thumb with the right hand. The preview shows "alt-tab open (Alt held)" when the session is live. |
+| The desktop overlay doesn't appear | It needs gaze — if gaze is uncalibrated there is no point to draw, so you get an empty overlay. Press INSERT to check the toggle, and run `calibrate_gaze.bat`. |
 | Gaze keeps picking the neighbouring screen | `run.bat --desk-report` and look at the angle between adjacent screen centres. Under ~8° the screens are too close together *from where you sit* — sit further back (a bigger angle per screen) or use `--monitors` to restrict gaze to the screens you actually work on. |
 | Gaze accuracy was fine and now is not | Kinesis says so in the log when your seat has drifted more than `distance_warn_fraction`. Move the chair back or re-run `calibrate_gaze.bat`. |
 | The desk report has the wrong screen sizes | That monitor's EDID did not carry a size (it would say `estimate`). Set `monitor_mm_overrides` or `--tune bezel_mm=` to match your desk. |

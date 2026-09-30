@@ -146,6 +146,31 @@ DEFAULTS: Dict[str, Any] = {
     "vcam_visual_scale": 3,            # render layers at 1/N resolution, upscale on composite
                                        # (1 = full quality and full cost; 3 = ~12x cheaper)
 
+    # --- gesture exclusivity ---
+    "gesture_lock": True,              # one gesture owns the hand until the hand opens again
+    "gesture_lock_timeout_s": 6.0,     # safety: never stay locked longer than this
+    "gesture_lock_open_fingers": 4,    # "open again" = at least this many fingers extended
+    "scroll_confirm_frames": 2,        # ring pinch must hold this long before scrolling starts
+    "drag_confirm_frames": 2,          # thumb-pinky drag must hold this long too (also keeps
+                                       # the scroll-vs-drag arbiter deterministic)
+    "scroll_release_frames": 3,        # pinch flicker must not end a scroll in progress
+    "scroll_deadband_px": 1.5,         # per-frame hand movement treated as jitter
+    "scroll_smooth": 0.45,             # EMA on the scrolling hand position (0 = raw)
+    "alt_tab_session_timeout_s": 30.0, # Alt is force-released after this long
+    # --- gaze focus: the window you look at becomes the focused window ---
+    "gaze_focus_enabled": True,
+    "gaze_focus_dwell_s": 0.7,         # look at a window this long and it comes forward
+    "gaze_focus_cooldown_s": 1.5,      # don't fight the user straight after focusing
+    "gaze_focus_skip_fullscreen": True,
+    # --- desktop overlay (click-through, over the whole desktop) ---
+    "desktop_overlay": False,
+    "desktop_overlay_fps": 30.0,
+    "desktop_overlay_style": "",       # "" follows vcam_style
+    "desktop_overlay_theme": "",       # "" follows vcam_theme
+    "desktop_overlay_scale": 6,        # internal render scale (cheaper than the vcam path)
+    "desktop_overlay_alpha_gain": 1.25,
+    "desktop_overlay_hotkey": "insert",  # toggles it at runtime
+    "desktop_overlay_panels_per_tick": 2,  # monitors redrawn per tick (others keep decaying)
     # --- aim ---
     "aim_enabled": True,
     "aim_hysteresis_deg": 7.0,         # must beat the current monitor by this margin

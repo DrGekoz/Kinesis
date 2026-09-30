@@ -31,6 +31,10 @@ class ActionRunner:
         self.last_action = ""
 
     # ------------------------------------------------------------------ logging
+    @property
+    def alt_held(self) -> bool:
+        return self._alt_held
+
     def _note(self, text: str):
         self.last_action = text
         self.log.append(f"{time.strftime('%H:%M:%S')} {text}")

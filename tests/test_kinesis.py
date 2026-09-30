@@ -474,8 +474,22 @@ def test_ring_pinch_scrolls_and_freezes_cursor(cfg):
     assert wheels, f"no wheel events while scrolling: {d.kinds()}"
     assert all(w.amount > 0 for w in wheels), "hand moving up must scroll up"
     assert not d.of("cursor.move"), "cursor must be frozen while scrolling"
-    d.feed([make_pose(cfg, **OPEN)], steps=2)
+    # a scroll now survives a pinch that flickers off for a frame or two, so ending it takes a few
+    d.feed([make_pose(cfg, **OPEN)], steps=int(cfg["scroll_release_frames"]) + 1)
     assert d.engine.active is None
+
+
+def test_brief_pinch_flicker_does_not_end_a_scroll(cfg):
+    """The old behaviour ended a scroll the instant the ring pinch missed a frame, which is most of
+    what made it feel broken: the hand is never perfectly still."""
+    d = Driver(cfg)
+    scrolling = make_pose(cfg, extended=("index", "middle"), pinches=("ring",), palm=(0.5, 0.5))
+    d.feed([scrolling], steps=4)
+    assert d.engine.active == "scroll"
+    d.feed([make_pose(cfg, extended=("index", "middle"), palm=(0.5, 0.50))], steps=1)   # blip
+    assert d.engine.active == "scroll", "one missed pinch frame ended the scroll"
+    d.feed([scrolling], steps=2)
+    assert d.engine.active == "scroll"
 
 
 def test_adaptive_scroll_faster_when_hand_moves_faster(cfg):

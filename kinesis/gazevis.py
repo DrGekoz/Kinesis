@@ -133,15 +133,16 @@ def text_width(s: str, size: int = 26) -> int:
 class GazeVisualizer:
     """Accumulation-buffer renderer for the gaze layer."""
 
-    def __init__(self, cfg, width: int, height: int, to_canvas=None):
-        self.style = str(cfg["vcam_style"]).lower()
+    def __init__(self, cfg, width: int, height: int, to_canvas: Optional[Callable] = None,
+                 style: Optional[str] = None, theme: Optional[str] = None,
+                 scale: Optional[int] = None):
+        self.style = str(style or cfg["vcam_style"]).lower()
         if self.style not in STYLES:
             self.style = "comet"
-        theme = THEMES.get(str(cfg["vcam_theme"]).lower()) or THEMES[DEFAULT_THEME]
-        self.theme = theme
-        self.theme_name = str(cfg["vcam_theme"]).lower()
-        self.head_bgr = _bgr(theme["head"])
-        self.tail_bgr = _bgr(theme["tail"])
+        self.theme_name = str(theme or cfg["vcam_theme"]).lower()
+        self.theme = THEMES.get(self.theme_name) or THEMES["ember"]
+        self.head_bgr = _bgr(self.theme["head"])
+        self.tail_bgr = _bgr(self.theme["tail"])
         self._decay_base = float(np.clip(float(cfg["vcam_trail_decay"]), 0.0, 0.99))
         self.tail_points = max(2, int(cfg["vcam_tail_points"]))
         self.glow_strength = float(cfg["vcam_glow"])
@@ -151,7 +152,7 @@ class GazeVisualizer:
         # All layers are rendered at a fraction of the canvas and upscaled once on composite. A
         # soft trail does not need 1080p precision, and full-resolution float buffers meant ~74 MB
         # of temporaries per frame (measured at 59-140 ms/frame, far over the frame budget).
-        self._scale = max(1, int(cfg["vcam_visual_scale"]))
+        self._scale = max(1, int(scale if scale else cfg["vcam_visual_scale"]))
         self._sw = max(8, self._w // self._scale)
         self._sh = max(8, self._h // self._scale)
         self._r_core = max(2, int(self._h * 0.006 / self._scale))
@@ -183,11 +184,14 @@ class GazeVisualizer:
             return math.sqrt(self._decay_base)    # long memory for the plotted path
         return self._decay_base
 
-    def advance(self, gaze) -> None:
-        """Called once per composed frame: decay, then stamp this frame's contribution.
+    def advance(self, gaze, present: bool = True) -> None:
+        """Decay, then stamp this frame's contribution if there is anything to stamp.
 
-        All mutation happens here; draw() only composites. Keeping the two separate means a frame
-        that is drawn twice does not double-expose the reticle.
+        `present=False` decays without stamping: that is what keeps the trail on a monitor you are
+        NOT looking at fading out naturally instead of freezing on screen.
+
+        All mutation happens here; draw() only composites, so a frame drawn twice cannot
+        double-expose the reticle.
         """
         self.frames += 1
         decay = self._decay
@@ -198,7 +202,7 @@ class GazeVisualizer:
             self._trail *= decay
             self._heat *= decay
 
-        if gaze is None or not getattr(gaze, "valid", False):
+        if gaze is None or not getattr(gaze, "valid", False) or not present:
             return
         pt = self.point(gaze)
         self._points.append(pt)

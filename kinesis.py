@@ -61,6 +61,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="drive the overlay with a synthetic gaze path so you can see the styles")
     p.add_argument("--vcam-demo-seconds", type=float, default=20.0,
                    help="how long --vcam-demo runs for")
+    p.add_argument("--overlay-desktop", action="store_true",
+                   help="draw the gaze overlay on the desktop itself (click-through, always on top)")
+    p.add_argument("--no-overlay-desktop", action="store_true", help="disable the desktop overlay")
     p.add_argument("--desk-report", action="store_true",
                    help="print the physical desk: screens, sizes, camera FoV, seat distance")
     p.add_argument("--check", action="store_true", help="environment self-test and exit")
@@ -88,6 +91,10 @@ def apply_args(args, cfg: Config) -> Config:
     theme = getattr(args, "vcam_theme", None)
     if theme:
         cfg.set("vcam_theme", theme)
+    if getattr(args, "no_overlay_desktop", False):
+        cfg.set("desktop_overlay", False)
+    if getattr(args, "overlay_desktop", False):
+        cfg.set("desktop_overlay", True)
     if args.no_vcam:
         cfg.set("vcam_enabled", False)
     if args.vcam:

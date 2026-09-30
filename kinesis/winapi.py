@@ -11,8 +11,11 @@ from ctypes import wintypes
 from dataclasses import dataclass
 from typing import List, Optional, Sequence
 
+import numpy as np          # only for the layered-window DIB view
+
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)     # layered-window bitmaps (desktop overlay)
 
 # ---------------------------------------------------------------- constants
 SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN = 76, 77
@@ -26,6 +29,7 @@ WS_EX_TOOLWINDOW = 0x00000080
 WS_EX_APPWINDOW = 0x00040000
 
 SW_MINIMIZE, SW_MAXIMIZE, SW_RESTORE, SW_SHOW = 6, 3, 9, 5
+SW_HIDE = 0
 SWP_NOSIZE, SWP_NOMOVE, SWP_NOACTIVATE = 0x0001, 0x0002, 0x0010
 SWP_SHOWWINDOW = 0x0040
 HWND_TOP = 0
@@ -222,6 +226,129 @@ def display_devices():
         out.append((adapter.DeviceName, adapter.DeviceString,
                     monitor.DeviceString, monitor.DeviceID))
     return out
+
+
+# ---------------------------------------------------------------------------- layered windows
+# For the transparent desktop overlay: a per-pixel-alpha window that Windows composites for us.
+# WS_EX_TRANSPARENT makes every click fall through to whatever is underneath, WS_EX_NOACTIVATE keeps
+# it from ever taking focus, and UpdateLayeredWindow pushes a premultiplied BGRA bitmap into it.
+WS_POPUP = 0x80000000
+WS_EX_LAYERED = 0x00080000
+WS_EX_TRANSPARENT = 0x00000020
+WS_EX_TOPMOST = 0x00000008
+WS_EX_NOACTIVATE = 0x08000000
+WS_EX_TOOLWINDOW = 0x00000080
+ULW_ALPHA = 0x00000002
+AC_SRC_OVER = 0x00
+AC_SRC_ALPHA = 0x01
+DIB_RGB_COLORS = 0
+VK_INSERT = 0x2D
+
+
+class BITMAPINFOHEADER(ctypes.Structure):
+    _fields_ = [("biSize", wintypes.DWORD), ("biWidth", wintypes.LONG),
+                ("biHeight", wintypes.LONG), ("biPlanes", wintypes.WORD),
+                ("biBitCount", wintypes.WORD), ("biCompression", wintypes.DWORD),
+                ("biSizeImage", wintypes.DWORD), ("biXPelsPerMeter", wintypes.LONG),
+                ("biYPelsPerMeter", wintypes.LONG), ("biClrUsed", wintypes.DWORD),
+                ("biClrImportant", wintypes.DWORD)]
+
+
+class BITMAPINFO(ctypes.Structure):
+    _fields_ = [("bmiHeader", BITMAPINFOHEADER), ("bmiColors", wintypes.DWORD * 3)]
+
+
+class BLENDFUNCTION(ctypes.Structure):
+    _fields_ = [("BlendOp", ctypes.c_ubyte), ("BlendFlags", ctypes.c_ubyte),
+                ("SourceConstantAlpha", ctypes.c_ubyte), ("AlphaFormat", ctypes.c_ubyte)]
+
+
+# ctypes passes ints as C int for unprototyped functions, and these are 64-bit handles - without
+# these prototypes a handle above 2^31 raises "int too long to convert" the moment one is allocated.
+class _SIZE(ctypes.Structure):
+    _fields_ = [("cx", wintypes.LONG), ("cy", wintypes.LONG)]
+
+
+user32.GetDC.argtypes = [wintypes.HWND]
+user32.GetDC.restype = wintypes.HDC
+user32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
+user32.DestroyWindow.argtypes = [wintypes.HWND]
+user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+user32.UpdateLayeredWindow.argtypes = [wintypes.HWND, wintypes.HDC, ctypes.POINTER(wintypes.POINT),
+                                       ctypes.POINTER(_SIZE), wintypes.HDC,
+                                       ctypes.POINTER(wintypes.POINT), wintypes.DWORD,
+                                       ctypes.POINTER(BLENDFUNCTION), wintypes.DWORD]
+user32.UpdateLayeredWindow.restype = wintypes.BOOL
+gdi32.CreateCompatibleDC.argtypes = [wintypes.HDC]
+gdi32.CreateCompatibleDC.restype = wintypes.HDC
+gdi32.DeleteDC.argtypes = [wintypes.HDC]
+gdi32.CreateDIBSection.argtypes = [wintypes.HDC, ctypes.POINTER(BITMAPINFO), wintypes.UINT,
+                                   ctypes.POINTER(ctypes.c_void_p), wintypes.HANDLE,
+                                   wintypes.DWORD]
+gdi32.CreateDIBSection.restype = wintypes.HBITMAP
+gdi32.SelectObject.argtypes = [wintypes.HDC, wintypes.HANDLE]
+gdi32.SelectObject.restype = wintypes.HANDLE
+gdi32.DeleteObject.argtypes = [wintypes.HANDLE]
+
+
+def create_overlay_window(x: int, y: int, w: int, h: int, title: str = "Kinesis overlay") -> int:
+    """A borderless, click-through, topmost, never-activating window covering the given rect."""
+    user32.CreateWindowExW.restype = wintypes.HWND
+    user32.CreateWindowExW.argtypes = [wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR,
+                                       wintypes.DWORD, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                                       ctypes.c_int, wintypes.HWND, wintypes.HMENU,
+                                       wintypes.HINSTANCE, wintypes.LPVOID]
+    ex = WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW
+    hwnd = user32.CreateWindowExW(ex, "Static", title, WS_POPUP, x, y, w, h, 0, 0, 0, None)
+    user32.SetWindowPos(hwnd, HWND_TOPMOST, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW)
+    return hwnd
+
+
+def dib_buffer(w: int, h: int):
+    """(hdc, bitmap, numpy BGRA view) - top-down 32-bit DIB we can write straight into."""
+    screen_dc = user32.GetDC(0)
+    hdc = gdi32.CreateCompatibleDC(screen_dc)
+    user32.ReleaseDC(0, screen_dc)
+    info = BITMAPINFO()
+    info.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+    info.bmiHeader.biWidth = int(w)
+    info.bmiHeader.biHeight = -int(h)                 # negative = top-down rows
+    info.bmiHeader.biPlanes = 1
+    info.bmiHeader.biBitCount = 32
+    info.bmiHeader.biCompression = DIB_RGB_COLORS
+    bits = ctypes.c_void_p()
+    gdi32.CreateDIBSection.restype = wintypes.HBITMAP
+    bitmap = gdi32.CreateDIBSection(hdc, ctypes.byref(info), DIB_RGB_COLORS,
+                                    ctypes.byref(bits), None, 0)
+    gdi32.SelectObject(hdc, bitmap)
+    view = np.ctypeslib.as_array(ctypes.cast(bits, ctypes.POINTER(ctypes.c_ubyte)),
+                                 shape=(int(h), int(w), 4))
+    return hdc, bitmap, view
+
+
+def blit_layered(hwnd: int, hdc: int, w: int, h: int) -> bool:
+    """Composite the DIB onto the window (the bitmap must already be premultiplied BGRA)."""
+    dst = wintypes.POINT(0, 0)
+    size = _SIZE(int(w), int(h))
+    src = wintypes.POINT(0, 0)
+    blend = BLENDFUNCTION(AC_SRC_OVER, 0, 255, AC_SRC_ALPHA)
+    screen_dc = user32.GetDC(0)
+    ok = user32.UpdateLayeredWindow(hwnd, screen_dc, ctypes.byref(dst), ctypes.byref(size),
+                                    hdc, ctypes.byref(src), 0, ctypes.byref(blend), ULW_ALPHA)
+    user32.ReleaseDC(0, screen_dc)
+    return bool(ok)
+
+
+def destroy_overlay_window(hwnd: int, hdc: int = 0, bitmap: int = 0) -> None:
+    try:
+        if bitmap:
+            gdi32.DeleteObject(bitmap)
+        if hdc:
+            gdi32.DeleteDC(hdc)
+        if hwnd:
+            user32.DestroyWindow(hwnd)
+    except Exception:
+        pass
 
 
 def enumerate_monitors(by_position: bool = True) -> List[Monitor]:

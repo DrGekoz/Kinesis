@@ -59,6 +59,12 @@ class GestureEngine:
         self._virtual = virtual_screen()
         # held-state
         self.active: Optional[str] = None          # scroll | drag | swipe
+        self.lock: Optional[str] = None            # the gesture that owns the hand right now
+        self._lock_since = 0.0
+        self._scroll_release = 0
+        self._scroll_smooth_y: Optional[float] = None
+        self._alt_tab_session_start = 0.0
+        self._prev_alt_pinch = False
         self.alt_held = False
         self.ptt_held = False
         # edge state
@@ -107,6 +113,55 @@ class GestureEngine:
         if frame_w and frame_h:
             self.frame_w, self.frame_h = frame_w, frame_h
 
+    @staticmethod
+    def _is_fist(hand: Optional[HandPose]) -> bool:
+        return hand is not None and hand.num_extended == 0 and not any(
+            hand.pinches.get(f) for f in ("index", "middle", "ring", "pinky"))
+
+    # ------------------------------------------------------------------ lock
+    def _release_lock(self, now: float = 0.0):
+        """Let go of the hand. The swipe cooldown restarts here on purpose: the pose that ends most
+        gestures is an open hand, and the motion that follows the release is exactly what a swipe
+        looks for."""
+        self.lock = None
+        if now:
+            self._t_swipe = now
+        self._swipe_samples.clear()
+
+    def _take_lock(self, name: str, now: float):
+        self.lock = name
+        self._lock_since = now
+
+    def _lock_gate(self, primary: HandPose, n_ext: int, pinches: dict, left_hand, now: float) -> bool:
+        """True when a NEW gesture may start.
+
+        This is the fix for gestures being read out of the tail of another one: releasing a scroll
+        sweeps the hand up through the open-hand pose with lateral motion, which is exactly what a
+        tab swipe looks for. Once a gesture owns the hand, nothing else starts until the hand opens
+        again - or the hand is lost, or the safety timeout expires.
+        """
+        if not bool(self.cfg["gesture_lock"]) or self.lock is None:
+            return True
+        if n_ext >= int(self.cfg["gesture_lock_open_fingers"]):
+            self._release_lock(now)
+            return True
+        if self.lock == "click":
+            # a click resolves on pinch release, not on a full open, or double-clicks could not work
+            # - and a FIST ends it immediately: closing a hand into a fist sweeps through a pinch,
+            # and that sweep must reach the close-flick rather than being eaten by the lock
+            if n_ext == 0 or (not pinches.get("index") and self._pending_click is None):
+                self._release_lock(now)
+                return True
+        elif self.lock == "alt_tab":
+            # the session belongs to the other hand: it ends when the left fist opens
+            if not self._is_fist(left_hand) and not self.alt_held:
+                self._release_lock(now)
+                return True
+        if (now - self._lock_since) > float(self.cfg["gesture_lock_timeout_s"]):
+            self._release_lock(now)       # never let a hand pose wedge the engine
+            return True
+        return False
+
     def _confirm(self, key: str, value: bool, need: int = CONFIRM_FRAMES) -> bool:
         n = self._counters.get(key, 0)
         n = n + 1 if value else 0
@@ -150,6 +205,14 @@ class GestureEngine:
         out: List[Intent] = []
         primary, left_hand, by_label = self._select_hands(poses)
 
+        # A left fist is the Alt-Tab modifier, never the cursor hand. When the right hand leaves
+        # the frame the fist used to be promoted to primary (by_label.get("Right") or ...), and
+        # its fist pose then fired the close-flick - minimising whatever had focus while the user
+        # was simply holding the modifier.
+        if (primary is left_hand and self._is_fist(primary) and not self.alt_held
+                and str(self.cfg["cursor_hand"]).lower() == "right"):
+            primary = None
+
         if self.active == "swipe" and now >= self._swipe_until:
             self.active = None
 
@@ -162,9 +225,10 @@ class GestureEngine:
         open_conf = self._confirm("open", n_ext >= 3)
         fist_conf = self._confirm("fist", n_ext == 0)
         pinches = primary.pinches
+        can_start = self._lock_gate(primary, n_ext, pinches, left_hand, now)
 
         # ---------------- Alt-Tab modifier (left hand fist, held) ----------------
-        out.extend(self._update_alt_tab(left_hand, primary, now, target_hwnd))
+        out.extend(self._update_alt_tab(left_hand, primary, now, target_hwnd, can_start))
         if self.alt_held:
             # while Alt is down only cursor movement and Tab taps are allowed
             if not self._owner_blocks():
@@ -173,21 +237,23 @@ class GestureEngine:
 
         # ---------------- pose transitions: flicks ----------------
         if fist_conf and self._state != "fist":
-            if (now - self._t_open) <= float(self.cfg["flick_window_s"]) \
+            if can_start and (now - self._t_open) <= float(self.cfg["flick_window_s"]) \
                     and (now - self._t_flick) > 0.8:
                 out.append(Intent("window.minimise", monitor=aim_index, target_hwnd=target_hwnd,
                                   note="close flick"))
                 self._t_flick = now
                 self._pending_click = None       # the close swallowed the pinch
+                self._take_lock("flick", now)
                 self.last_note = "close flick -> minimise"
             self._state = "fist"
             self._t_fist = now
         elif open_conf and self._state != "open":
-            if (now - self._t_fist) <= float(self.cfg["flick_window_s"]) \
+            if can_start and (now - self._t_fist) <= float(self.cfg["flick_window_s"]) \
                     and (now - self._t_flick) > 0.8:
                 out.append(Intent("window.maximise", monitor=aim_index, target_hwnd=target_hwnd,
                                   note="open flick"))
                 self._t_flick = now
+                self._take_lock("flick", now)
                 self.last_note = "open flick -> maximise/fullscreen"
             self._state = "open"
             self._t_open = now
@@ -209,12 +275,13 @@ class GestureEngine:
                 self.ptt_held = False
                 out.append(Intent("keys.up", keys=self.ptt_keys))
                 self.last_note = "push-to-talk release"
-        elif shaka and self.active is None:
+        elif shaka and self.active is None and can_start:
             if self._shaka_since is None:
                 self._shaka_since = now
             elif now - self._shaka_since >= float(self.cfg["ptt_arm_s"]):
                 self.ptt_held = True
                 out.append(Intent("keys.down", keys=self.ptt_keys))
+                self._take_lock("ptt", now)
                 self.last_note = "push-to-talk hold"
         else:
             self._shaka_since = None
@@ -222,31 +289,41 @@ class GestureEngine:
         # ---------------- held actions: scroll / drag ----------------
         ring = bool(pinches.get("ring"))
         pinky = bool(pinches.get("pinky"))
+        ring_conf = self._confirm("ring", ring, int(self.cfg["scroll_confirm_frames"]))
         if self.active == "scroll":
             if ring:
+                self._scroll_release = 0
                 out.extend(self._scroll_step(primary, now, dt))
             else:
-                self.active = None
-                self._scroll_anchor = None
-                self.last_note = "scroll end"
+                # a pinch that flickers off for a frame or two must not end a scroll in progress
+                self._scroll_release += 1
+                if self._scroll_release >= int(self.cfg["scroll_release_frames"]):
+                    self.active = None
+                    self._scroll_anchor = None
+                    self._scroll_smooth_y = None
+                    self.last_note = "scroll end"
         elif self.active == "drag":
             if not pinky:
                 out.append(Intent("mouse.up", button="left"))
                 self.active = None
                 self.last_note = "drag end"
-        elif self.active is None and not fist_conf:
-            if ring:
+        elif self.active is None and not fist_conf and can_start:
+            if ring_conf:
                 self.active = "scroll"
                 self._scroll_anchor = primary.palm_px[1]
+                self._scroll_smooth_y = None
+                self._scroll_release = 0
+                self._take_lock("scroll", now)
                 self.last_note = "scroll start"
-            elif pinky:
+            elif self._confirm("pinky", pinky, int(self.cfg["drag_confirm_frames"])):
                 out.append(Intent("mouse.down", button="left"))
                 self.active = "drag"
+                self._take_lock("drag", now)
                 self.last_note = "drag start"
 
         # ---------------- tab swipe (open hand, fast lateral move) ----------------
         pinching_any = any(pinches.get(f) for f in ("index", "middle", "ring", "pinky"))
-        if self.active is None and n_ext >= 4 and not pinching_any:
+        if self.active is None and can_start and n_ext >= 4 and not pinching_any:
             swipe = self._swipe_detect(primary, now, target_hwnd)
             if swipe is not None:
                 out.append(swipe)
@@ -254,8 +331,11 @@ class GestureEngine:
             self._swipe_samples.clear()
 
         # ---------------- clicks ----------------
-        if not fist_conf and self.active is None and not self.ptt_held:
+        if (not fist_conf and self.active is None and not self.ptt_held
+                and self.lock in (None, "click")):
             out.extend(self._click_logic(primary, now))
+            if self._pending_click is not None and self.lock is None:
+                self._take_lock("click", now)
         elif fist_conf:
             self._pending_click = None
 
@@ -328,12 +408,19 @@ class GestureEngine:
 
     def _scroll_step(self, primary: HandPose, now: float, dt: float) -> List[Intent]:
         y = primary.palm_px[1]
+        smooth = float(self.cfg["scroll_smooth"])
+        if smooth > 0.0:
+            # hand tracking jitter reads as scrolling; a little EMA on this axis removes it without
+            # making the scroll feel late
+            self._scroll_smooth_y = y if self._scroll_smooth_y is None else (
+                smooth * self._scroll_smooth_y + (1.0 - smooth) * y)
+            y = self._scroll_smooth_y
         if self._scroll_anchor is None:
             self._scroll_anchor = y
             return []
         dy = self._scroll_anchor - y                    # hand up = positive = scroll up
         self._scroll_anchor = y
-        if abs(dy) < 0.5:
+        if abs(dy) < float(self.cfg["scroll_deadband_px"]):
             return []
         clicks = dy / PX_PER_SCROLL_CLICK * float(self.cfg["scroll_gain"])
         if bool(self.cfg["scroll_adaptive"]):
@@ -366,6 +453,7 @@ class GestureEngine:
         self._t_swipe = now
         self._swipe_samples.clear()
         self.active = "swipe"
+        self._take_lock("swipe", now)
         self._swipe_until = now + 0.18          # freeze the cursor just long enough to settle
         if dx_frac > 0:
             self.last_note = "swipe right -> next tab"
@@ -376,36 +464,55 @@ class GestureEngine:
                       note="swipe left")
 
     def _update_alt_tab(self, left_hand: Optional[HandPose], primary: HandPose, now: float,
-                        target_hwnd: Optional[int] = None) -> List[Intent]:
+                        target_hwnd: Optional[int] = None,
+                        can_start: bool = True) -> List[Intent]:
+        """Left fist held opens Alt; the right hand then moves between windows.
+
+        Hardened over the first cut: the session latches (so nothing else can fire mid-switch), Tab
+        fires on the rising edge of the pinch as well as while it is held, Alt is force-released on
+        a timeout, and the whole thing ends the moment the left fist opens.
+        """
         out: List[Intent] = []
-        left_fist = left_hand is not None and left_hand.num_extended == 0 and not any(
-            left_hand.pinches.get(f) for f in ("index", "middle", "ring", "pinky"))
+        left_fist = self._is_fist(left_hand)
 
         if not self.alt_held:
-            if left_fist:
+            if left_fist and can_start:
                 if self._left_fist_since is None:
                     self._left_fist_since = now
                     self.last_note = "left fist: hold to open Alt-Tab"
                 elif now - self._left_fist_since >= float(self.cfg["alt_tab_hold_s"]):
                     self.alt_held = True
+                    self._alt_tab_session_start = now
+                    self._take_lock("alt_tab", now)
+                    self._prev_alt_pinch = bool(primary.pinches.get("index"))
                     out.append(Intent("keys.down", keys=("alt",), focus_hwnd=target_hwnd))
                     out.append(Intent("keys.tap", keys=("tab",)))
                     self._t_tab = now
                     self.last_note = "alt-tab open (Alt held)"
-            else:
+            elif not left_fist:
                 self._left_fist_since = None
         else:
             if not left_fist:
                 self.alt_held = False
+                self._left_fist_since = None
                 out.append(Intent("keys.up", keys=("alt",)))
+                self._release_lock(now)
                 self.last_note = "alt-tab commit (Alt released)"
+            elif (now - self._alt_tab_session_start) > float(self.cfg["alt_tab_session_timeout_s"]):
+                self.alt_held = False
+                self._left_fist_since = None
+                out.append(Intent("keys.up", keys=("alt",)))
+                self._release_lock(now)
+                self.last_note = "alt-tab timeout (Alt released)"
             else:
-                is_right = primary.handedness == "Right" or primary is not left_hand
-                if is_right and primary.pinches.get("index"):
-                    if now - self._t_tab >= float(self.cfg["alt_tab_repeat_s"]):
-                        out.append(Intent("keys.tap", keys=("tab",)))
-                        self._t_tab = now
-                        self.last_note = "alt-tab next window"
+                pinch = bool(primary.pinches.get("index"))
+                rising = pinch and not self._prev_alt_pinch
+                repeat = pinch and (now - self._t_tab) >= float(self.cfg["alt_tab_repeat_s"])
+                if rising or repeat:
+                    out.append(Intent("keys.tap", keys=("tab",)))
+                    self._t_tab = now
+                    self.last_note = "alt-tab next window"
+        self._prev_alt_pinch = bool(primary.pinches.get("index"))
         return out
 
     # ------------------------------------------------------------------ safety
@@ -419,11 +526,15 @@ class GestureEngine:
         if self.ptt_held:
             out.append(Intent("keys.up", keys=self.ptt_keys))
         self.active = None
+        self.lock = None
         self.alt_held = False
         self.ptt_held = False
         self._scroll_anchor = None
+        self._scroll_smooth_y = None
+        self._scroll_release = 0
         self._left_fist_since = None
         self._shaka_since = None
+        self._prev_alt_pinch = False
         self._pending_click = None
         self._pending_release = None
         self._swipe_samples.clear()
