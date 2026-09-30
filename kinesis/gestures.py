@@ -27,6 +27,8 @@ class Intent:
     keys: Tuple[str, ...] = ()
     amount: int = 0
     monitor: Optional[int] = None
+    target_hwnd: Optional[int] = None      # window resolved from gaze (or aim); None = foreground
+    focus_hwnd: Optional[int] = None       # focus this first (keyboard needs a focused window)
     x: float = 0.0
     y: float = 0.0
     note: str = ""
@@ -129,8 +131,11 @@ class GestureEngine:
         return self.active in ("scroll", "swipe")
 
     # ------------------------------------------------------------------ main
-    def update(self, poses: Sequence[HandPose], aim_index: Optional[int], now: float, dt: float
-               ) -> List[Intent]:
+    def update(self, poses: Sequence[HandPose], aim_index: Optional[int], now: float, dt: float,
+               target_hwnd: Optional[int] = None) -> List[Intent]:
+        """target_hwnd is the window the gaze says you are looking at (or None). It is resolved by
+        the caller so this module stays free of OS calls, and it is what makes gestures act on the
+        window you are looking at rather than on whatever has focus."""
         out: List[Intent] = []
         primary, left_hand, by_label = self._select_hands(poses)
 
@@ -148,7 +153,7 @@ class GestureEngine:
         pinches = primary.pinches
 
         # ---------------- Alt-Tab modifier (left hand fist, held) ----------------
-        out.extend(self._update_alt_tab(left_hand, primary, now))
+        out.extend(self._update_alt_tab(left_hand, primary, now, target_hwnd))
         if self.alt_held:
             # while Alt is down only cursor movement and Tab taps are allowed
             if not self._owner_blocks():
@@ -159,7 +164,8 @@ class GestureEngine:
         if fist_conf and self._state != "fist":
             if (now - self._t_open) <= float(self.cfg["flick_window_s"]) \
                     and (now - self._t_flick) > 0.8:
-                out.append(Intent("window.minimise", monitor=aim_index, note="close flick"))
+                out.append(Intent("window.minimise", monitor=aim_index, target_hwnd=target_hwnd,
+                                  note="close flick"))
                 self._t_flick = now
                 self._pending_click = None       # the close swallowed the pinch
                 self.last_note = "close flick -> minimise"
@@ -168,7 +174,8 @@ class GestureEngine:
         elif open_conf and self._state != "open":
             if (now - self._t_fist) <= float(self.cfg["flick_window_s"]) \
                     and (now - self._t_flick) > 0.8:
-                out.append(Intent("window.maximise", monitor=aim_index, note="open flick"))
+                out.append(Intent("window.maximise", monitor=aim_index, target_hwnd=target_hwnd,
+                                  note="open flick"))
                 self._t_flick = now
                 self.last_note = "open flick -> maximise/fullscreen"
             self._state = "open"
@@ -229,7 +236,7 @@ class GestureEngine:
         # ---------------- tab swipe (open hand, fast lateral move) ----------------
         pinching_any = any(pinches.get(f) for f in ("index", "middle", "ring", "pinky"))
         if self.active is None and n_ext >= 4 and not pinching_any:
-            swipe = self._swipe_detect(primary, now)
+            swipe = self._swipe_detect(primary, now, target_hwnd)
             if swipe is not None:
                 out.append(swipe)
         else:
@@ -328,7 +335,8 @@ class GestureEngine:
             return []
         return [Intent("mouse.wheel", amount=units)]
 
-    def _swipe_detect(self, primary: HandPose, now: float) -> Optional[Intent]:
+    def _swipe_detect(self, primary: HandPose, now: float,
+                      target_hwnd: Optional[int] = None) -> Optional[Intent]:
         win = float(self.cfg["swipe_window_s"])
         self._swipe_samples.append((now, primary.palm_px[0], primary.palm_px[1]))
         self._swipe_samples = [s for s in self._swipe_samples if now - s[0] <= win]
@@ -350,12 +358,14 @@ class GestureEngine:
         self._swipe_until = now + 0.18          # freeze the cursor just long enough to settle
         if dx_frac > 0:
             self.last_note = "swipe right -> next tab"
-            return Intent("keys.tap", keys=("ctrl", "tab"), note="swipe right")
+            return Intent("keys.tap", keys=("ctrl", "tab"), focus_hwnd=target_hwnd,
+                          note="swipe right")
         self.last_note = "swipe left -> previous tab"
-        return Intent("keys.tap", keys=("ctrl", "shift", "tab"), note="swipe left")
+        return Intent("keys.tap", keys=("ctrl", "shift", "tab"), focus_hwnd=target_hwnd,
+                      note="swipe left")
 
-    def _update_alt_tab(self, left_hand: Optional[HandPose], primary: HandPose, now: float
-                        ) -> List[Intent]:
+    def _update_alt_tab(self, left_hand: Optional[HandPose], primary: HandPose, now: float,
+                        target_hwnd: Optional[int] = None) -> List[Intent]:
         out: List[Intent] = []
         left_fist = left_hand is not None and left_hand.num_extended == 0 and not any(
             left_hand.pinches.get(f) for f in ("index", "middle", "ring", "pinky"))
@@ -367,7 +377,7 @@ class GestureEngine:
                     self.last_note = "left fist: hold to open Alt-Tab"
                 elif now - self._left_fist_since >= float(self.cfg["alt_tab_hold_s"]):
                     self.alt_held = True
-                    out.append(Intent("keys.down", keys=("alt",)))
+                    out.append(Intent("keys.down", keys=("alt",), focus_hwnd=target_hwnd))
                     out.append(Intent("keys.tap", keys=("tab",)))
                     self._t_tab = now
                     self.last_note = "alt-tab open (Alt held)"
@@ -420,3 +430,89 @@ class GestureEngine:
         if self.ptt_held:
             bits.append("ptt")
         return ",".join(bits) if bits else "idle"
+
+
+class GazeScroller:
+    """Eye-driven scrolling: hold your gaze in the top or bottom band of the screen and it scrolls
+    for as long as you keep looking.
+
+    Lives here with the other gesture logic rather than in the gaze engine - it is a gesture, it
+    just happens to be driven by eyes instead of hands. Emission is continuous while engaged, with a
+    dwell before it starts (so a glance is not a scroll), a ramp to full speed (so it does not jerk
+    into motion), and a cooldown after it stops (so it does not flap on and off at the boundary).
+
+    The wheel goes to whichever window is under the *cursor*, so unless the cursor is parked on the
+    gaze point this would scroll the wrong window - hence the cursor warp.
+    """
+
+    def __init__(self, cfg):
+        self.cfg = cfg
+        self.mode = str(cfg["gaze_scroll_mode"]).lower()
+        self.edge = float(cfg["gaze_scroll_edge"])
+        self.dwell = float(cfg["gaze_scroll_dwell_s"])
+        self.ramp = max(float(cfg["gaze_scroll_ramp_s"]), 1e-3)
+        self.speed = float(cfg["gaze_scroll_speed"])
+        self.cooldown = float(cfg["gaze_scroll_cooldown_s"])
+        self.warp = bool(cfg["gaze_scroll_warp_cursor"])
+        self.active = False
+        self.direction = 0
+        self._band_since: Optional[float] = None
+        self._active_since = 0.0
+        self._stopped_at = 0.0
+
+    def _band(self, gaze) -> int:
+        """-1 = top band (scroll up), +1 = bottom band (scroll down), 0 = neither."""
+        if gaze is None or not getattr(gaze, "valid", False):
+            return 0
+        _left, top, _w, h = virtual_screen()
+        rel = (gaze.y - top) / max(h, 1)
+        if rel <= self.edge:
+            return -1
+        if rel >= 1.0 - self.edge:
+            return 1
+        return 0
+
+    def update(self, gaze, now: float, dt: float) -> List[Intent]:
+        if self.mode != "edge":
+            return []
+        band = self._band(gaze)
+        if band == 0:
+            if self.active:
+                self._stopped_at = now
+            self.active = False
+            self.direction = 0
+            self._band_since = None
+            return []
+        if self._band_since is None or band != self.direction:
+            self._band_since = now                 # direction change restarts the dwell timer
+            self.direction = band
+            if self.active:
+                self.active = False
+                self._stopped_at = now
+        if not self.active:
+            if self._stopped_at and now - self._stopped_at < self.cooldown:
+                return []
+            if now - self._band_since < self.dwell:
+                return []
+            self.active = True
+            self._active_since = now
+
+        strength = min(1.0, 0.15 + (now - self._active_since) / self.ramp)
+        units = self.speed * strength * max(dt, 1e-4)
+        amount = int(units) * (-self.direction)     # top band (-1) scrolls up (+)
+        out: List[Intent] = []
+        if self.warp:
+            out.append(Intent("cursor.warp", x=gaze.x, y=gaze.y, note="gaze scroll"))
+        if amount:
+            out.append(Intent("mouse.wheel", amount=amount))
+        return out
+
+    def release(self):
+        self.active = False
+        self.direction = 0
+        self._band_since = None
+
+    def status(self) -> str:
+        if not self.active:
+            return "gaze-scroll idle"
+        return f"gaze-scroll {'up' if self.direction < 0 else 'down'}"

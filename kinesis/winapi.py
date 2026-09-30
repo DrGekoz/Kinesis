@@ -27,7 +27,11 @@ WS_EX_APPWINDOW = 0x00040000
 
 SW_MINIMIZE, SW_MAXIMIZE, SW_RESTORE, SW_SHOW = 6, 3, 9, 5
 SWP_NOSIZE, SWP_NOMOVE, SWP_NOACTIVATE = 0x0001, 0x0002, 0x0010
+SWP_SHOWWINDOW = 0x0040
 HWND_TOP = 0
+HWND_TOPMOST = -1
+HWND_NOTOPMOST = -2
+GA_ROOT = 2
 
 INPUT_MOUSE, INPUT_KEYBOARD = 0, 1
 MOUSEEVENTF_MOVE = 0x0001
@@ -337,6 +341,64 @@ def is_fullscreen_anywhere(hwnd: int) -> bool:
     return bool(info and info.is_fullscreen)
 
 
+def topmost_window_at(x: int, y: int, monitors: Optional[List[Monitor]] = None,
+                      skip_pids: Optional[set] = None,
+                      blocked_titles: Optional[Sequence[str]] = None) -> Optional[int]:
+    """Topmost window containing the given screen point.
+
+    Same filters as topmost_window_on_monitor (visible, not minimised, titled, not an overlay or
+    shell window, not our own process), but the test is whether the window's own rect contains the
+    point rather than whether the window's centre sits on a monitor. This is what turns a gaze
+    point into "the window I am looking at"."""
+    monitors = monitors if monitors is not None else enumerate_monitors()
+    skip_pids = skip_pids or set()
+    blocked = tuple(t.lower() for t in (blocked_titles or ()))
+    for hwnd in _enum_windows():
+        if not user32.IsWindowVisible(wintypes.HWND(hwnd)):
+            continue
+        if user32.IsIconic(wintypes.HWND(hwnd)):
+            continue
+        rect = _window_rect(hwnd)
+        if rect is None or not (rect[0] <= x < rect[2] and rect[1] <= y < rect[3]):
+            continue
+        length = user32.GetWindowTextLengthW(wintypes.HWND(hwnd))
+        if length == 0:
+            continue
+        buf = ctypes.create_unicode_buffer(length + 1)
+        user32.GetWindowTextW(wintypes.HWND(hwnd), buf, length + 1)
+        if blocked and any(token in buf.value.lower() for token in blocked):
+            continue
+        ex = user32.GetWindowLongW(wintypes.HWND(hwnd), GWL_EXSTYLE)
+        if ex & WS_EX_TOOLWINDOW and not (ex & WS_EX_APPWINDOW):
+            continue
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(wintypes.HWND(hwnd), ctypes.byref(pid))
+        if int(pid.value) in skip_pids:
+            continue
+        return hwnd
+    return None
+
+
+def focus_and_verify(hwnd: int, attempts: int = 3, settle: float = 0.08,
+                     allow_alt_trick: bool = True) -> bool:
+    """Focus a window and confirm the OS actually gave it foreground.
+
+    SetForegroundWindow is refused when the calling process is not itself foreground, which is the
+    normal case here (Kinesis sits in the background). AttachThreadInput usually gets around it; if
+    not, the documented fallback is to tap Alt, which clears the foreground lock for the next call.
+    The Alt tap is skipped when Alt is already being held by the Alt-Tab gesture.
+    """
+    import time as _time
+    for attempt in range(max(attempts, 1)):
+        focus_window(hwnd)
+        _time.sleep(settle)
+        if user32.GetForegroundWindow() == hwnd:
+            return True
+        if allow_alt_trick and attempt == attempts - 2:
+            _send(_key_input(0x12, False), _key_input(0x12, True))     # VK_MENU tap
+    return user32.GetForegroundWindow() == hwnd
+
+
 # ---------------------------------------------------------------- input injection
 def _send(*inputs):
     n = len(inputs)
@@ -450,6 +512,32 @@ def focus_window(hwnd: int) -> None:
     finally:
         if attached:
             user32.AttachThreadInput(fg_thread, cur_thread, False)
+
+
+def set_dpi_aware():
+    """Physical pixels everywhere. Without this, at anything above 100% display scaling
+    GetSystemMetrics hands back virtualised numbers and every cursor/gaze coordinate is wrong."""
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)      # per-monitor v2
+    except Exception:
+        try:
+            user32.SetProcessDPIAware()
+        except Exception:
+            pass
+
+
+def root_hwnd(hwnd: int) -> int:
+    """Top-level window for a child handle (e.g. Tk's winfo_id())."""
+    return int(user32.GetAncestor(wintypes.HWND(hwnd), GA_ROOT))
+
+
+def position_window(hwnd: int, x: int, y: int, width: int, height: int, topmost: bool = True):
+    """Place a window exactly, including on monitors left of the primary (negative x). Tk's own
+    geometry strings cannot express a negative origin - a leading '-' means 'from the right edge'."""
+    flags = SWP_SHOWWINDOW | SWP_NOACTIVATE
+    insert_after = wintypes.HWND(HWND_TOPMOST) if topmost else wintypes.HWND(HWND_NOTOPMOST)
+    user32.SetWindowPos(wintypes.HWND(int(hwnd)), insert_after, int(x), int(y),
+                        int(width), int(height), flags)
 
 
 def own_process_id() -> int:

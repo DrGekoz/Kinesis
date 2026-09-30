@@ -26,6 +26,7 @@ class ActionRunner:
         self._deferred: List[Tuple[float, str, Callable[[], None]]] = []
         self._skip_pids = {w.own_process_id()}
         self._wheel_residual = 0
+        self._alt_held = False
         self.last_action = ""
 
     # ------------------------------------------------------------------ logging
@@ -76,15 +77,36 @@ class ActionRunner:
 
     def _keys_down(self, keys: Sequence[str]):
         self._note("key down " + "+".join(keys))
+        for k in keys:
+            if k == "alt":
+                self._alt_held = True
         if not self.dry:
             for k in keys:
                 w.key_down(k)
 
     def _keys_up(self, keys: Sequence[str]):
         self._note("key up " + "+".join(keys))
+        for k in keys:
+            if k == "alt":
+                self._alt_held = False
         if not self.dry:
             for k in reversed(keys):
                 w.key_up(k)
+
+    def _focus_first(self, intent: Intent) -> bool:
+        """Keyboard gestures only work on a focused window (a browser will not switch tabs in an
+        unfocused one), so focus the target and verify the OS actually agreed before sending."""
+        hwnd = intent.focus_hwnd
+        if not hwnd or not self._usable(hwnd):
+            return False
+        if w.user32.GetForegroundWindow() == hwnd:
+            return True
+        if self.dry:
+            self._note(f"would focus hwnd {hwnd}")
+            return True
+        ok = w.focus_and_verify(hwnd, allow_alt_trick=not self._alt_held)
+        self._note(f"focus {'ok' if ok else 'FAILED'} hwnd {hwnd}")
+        return ok
 
     def _keys_tap(self, keys: Sequence[str]):
         self._note("key tap " + "+".join(keys))
@@ -96,20 +118,39 @@ class ActionRunner:
             w.key_up(k)
 
     # ------------------------------------------------------------------ windows
-    def target_window(self, monitor_index: Optional[int]) -> Optional[WindowInfo]:
-        hwnd = None
-        if monitor_index is not None:
-            hwnd = w.topmost_window_on_monitor(monitor_index, self.monitors, self._skip_pids,
+    @staticmethod
+    def _usable(hwnd: int) -> bool:
+        if not hwnd:
+            return False
+        handle = w.wintypes.HWND(hwnd)
+        return bool(w.user32.IsWindow(handle) and w.user32.IsWindowVisible(handle)
+                    and not w.user32.IsIconic(handle))
+
+    def resolve_target(self, intent: Intent) -> Optional[WindowInfo]:
+        """The window an action applies to: the gaze-resolved window first (that is the point of
+        the eye tracking), then the monitor the hand was pointing at, then whatever has focus."""
+        if intent.target_hwnd and self._usable(intent.target_hwnd):
+            info = w.window_info(intent.target_hwnd, self.monitors)
+            if info is not None and info.process_id not in self._skip_pids:
+                return info
+        if intent.monitor is not None:
+            hwnd = w.topmost_window_on_monitor(intent.monitor, self.monitors, self._skip_pids,
                                                self.cfg.get("window_title_blocklist") or ())
-        if hwnd is None:
-            hwnd = w.user32.GetForegroundWindow()
+            if hwnd:
+                info = w.window_info(hwnd, self.monitors)
+                if info is not None:
+                    return info
+        hwnd = w.user32.GetForegroundWindow()
         if not hwnd:
             return None
         info = w.window_info(hwnd, self.monitors)
         if info and info.process_id in self._skip_pids:
-            hwnd = w.user32.GetForegroundWindow()
-            info = w.window_info(hwnd, self.monitors)
+            return None
         return info
+
+    def target_window(self, monitor_index: Optional[int]) -> Optional[WindowInfo]:
+        """Kept for callers that only have a monitor index."""
+        return self.resolve_target(Intent("window.target", monitor=monitor_index))
 
     def _fs_key(self, info: Optional[WindowInfo]) -> str:
         hint = str(self.cfg["youtube_title_hint"]).lower()
@@ -123,8 +164,8 @@ class ActionRunner:
         self._note(f"{what}: send {key.upper()} to {title!r}")
         self._keys_tap((key,))
 
-    def minimise_aimed(self, monitor_index: Optional[int]):
-        info = self.target_window(monitor_index)
+    def minimise_aimed(self, intent: Intent):
+        info = self.resolve_target(intent)
         if info is None:
             self._note("minimise: no target window")
             return
@@ -140,8 +181,8 @@ class ActionRunner:
             if not self.dry:
                 w.minimise(info.hwnd)
 
-    def maximise_aimed(self, monitor_index: Optional[int]):
-        info = self.target_window(monitor_index)
+    def maximise_aimed(self, intent: Intent):
+        info = self.resolve_target(intent)
         if info is None:
             self._note("maximise: no target window")
             return
@@ -185,15 +226,19 @@ class ActionRunner:
             elif kind == "mouse.wheel":
                 self._wheel(intent.amount)
             elif kind == "keys.down":
+                self._focus_first(intent)
                 self._keys_down(intent.keys)
             elif kind == "keys.up":
                 self._keys_up(intent.keys)
             elif kind == "keys.tap":
+                self._focus_first(intent)
                 self._keys_tap(intent.keys)
             elif kind == "window.minimise":
-                self.minimise_aimed(intent.monitor)
+                self.minimise_aimed(intent)
             elif kind == "window.maximise":
-                self.maximise_aimed(intent.monitor)
+                self.maximise_aimed(intent)
+            elif kind == "cursor.warp":
+                self._set_cursor(intent.x, intent.y)
             else:
                 self._note(f"ignored intent {kind}")
 

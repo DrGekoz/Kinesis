@@ -217,7 +217,103 @@ pointing-angle feature; if a future model replaces MediaPipe, this is the harnes
 
 ---
 
-## 6. Roadmap
+## 6. Gaze (EyeTrax) and the virtual camera
+
+Two additions, both required by Joe:
+
+1. **Gaze selects the target window**, so hand gestures apply to the window you are looking at
+   rather than to whatever merely has focus.
+2. **The webcam feed goes back out through a virtual camera** with the hand-tracking overlaid, so
+   the webcam can still be streamed while Kinesis is using it. Built on EyeTrax's existing virtual
+   cam overlay, with the hand overlays composited on top.
+
+### What EyeTrax (0.4.0) gives us, and what it does not
+
+Gives: `GazeEstimator` (MediaPipe Tasks FaceLandmarker, rotation-normalised eye landmarks plus
+yaw/pitch/roll as features, ridge/SVR/MLP models, save/load), four calibration routines, four
+smoothers (Kalman, Kalman+EMA, KDE, none), a `draw_cursor` helper, and a virtual-cam path built on
+**pyvirtualcam targeting the OBS virtual camera**.
+
+Does not give, and why we add it:
+
+| Gap | Consequence | What Kinesis does |
+|---|---|---|
+| `get_screen_size()` returns `get_monitors()[0]` | gaze coordinates only exist on the primary monitor; four displays here | our own calibration across the **whole virtual desktop** (dots placed on every monitor, trained against virtual-desktop coordinates) |
+| every entry point opens its own `VideoCapture` | a second camera client, and frames that are not the ones the gestures saw | feed EyeTrax `extract_features()` from the frame Kinesis already captured |
+| the virtual cam paints a full-screen green canvas with a gaze dot | no webcam in the feed, so it cannot be used *as* a webcam | two modes: `passthrough` (real frames + overlays) and `overlay` (EyeTrax's chroma-keyable look + hand overlays) |
+
+Everything EyeTrax-side is imported from the vendored source (`pip install -e vendor/eyetrax`), so
+the code being extended is the code that runs. `draw_cursor` and the green-canvas style are reused
+verbatim in overlay mode rather than reimplemented.
+
+### Which window a gesture applies to
+
+Resolved per action, in order:
+
+1. **Gaze target** — the topmost non-blocklisted window under the gaze point (z-order walk), when
+   gaze is calibrated and the point is valid.
+2. **Aim target** — the topmost window on the monitor the *hand* was pointing at (section 3).
+3. **Foreground window** — the fallback when neither is available.
+
+Mouse actions land at the cursor, so nothing has to move. **Keyboard actions need the window
+actually focused** — a browser will not switch tabs in an unfocused window — so tab swipes and
+Alt-Tab call `focus_window()` first and verify `GetForegroundWindow()` before sending keys.
+
+### Gaze scrolling
+
+Eye-driven, because a glance is the natural way to say "scroll this":
+
+- **edge mode** — looking at the top or bottom band of the screen (default 12%) for a short dwell
+  (0.25 s) scrolls continuously while you keep looking; leaving the band stops it. Bands are on the
+  *screen*, so it works over any window.
+- **adaptive hand scroll stays** (thumb+ring pinch) and now scrolls whatever window the gaze/cursor
+  is over.
+- Wheel events go to the window under the **cursor**, so on gaze-scroll activation the cursor is
+  warped to the gaze point first (`gaze.scroll_warp_cursor`). Without that, "scroll what I'm
+  looking at" would scroll whatever the pointer happened to be resting on.
+
+### Virtual camera
+
+The device is already on this machine: the physical camera is a **Logitech C920 ("HD Pro Webcam
+C920")** and **"OBS Virtual Camera"** is registered as a DirectShow device, so `pyvirtualcam` can
+target it. Verified the C920 also allows **multiple simultaneous clients** (two DSHOW opens, 13
+frames each in 2 s), so the virtual camera is about adding overlays and freeing the device for other
+apps, not about a workaround for exclusivity.
+
+| Mode | Output | Use |
+|---|---|---|
+| `passthrough` | the real webcam frame + hand skeleton + gaze cursor + HUD status | select "OBS Virtual Camera" in Discord/OBS/Zoom and your face is there, with the tracking drawn on |
+| `overlay` | EyeTrax's green canvas + gaze cursor + hand skeleton + labels, chroma-keyable | composite over a real camera feed in OBS |
+| `off` | nothing | default until asked for |
+
+### New pieces
+
+```
+kinesis/gaze.py            wraps GazeEstimator: our frames in, smoothed screen-space gaze out
+kinesis/vcam.py            pyvirtualcam output + the two compositing modes
+kinesis/windows.py         (winapi additions: topmost_window_at, focus verification)
+calibrate_gaze.py          multi-monitor gaze calibration wizard (Tk, borderless, per monitor)
+calibrate_gaze.bat         launcher
+```
+
+Config additions: `gaze_enabled`, `gaze_model_path`, `gaze_smoother`, `gaze_max_age_s`,
+`gaze_scroll_mode`, `gaze_scroll_edge`, `gaze_scroll_dwell_s`, `gaze_scroll_speed`,
+`gaze_scroll_warp_cursor`, `vcam_enabled`, `vcam_mode`, `vcam_fps`, `vcam_device`,
+`vcam_show_landmarks`, `vcam_show_hud`.
+
+### Verification, honestly split
+
+Machine-checkable without his eyes: the target-resolution order (a synthetic gaze point over a real
+window resolves to that window), focus-before-keyboard, the edge-scroll state machine (dwell,
+activation, stop-on-leave, cooldown), palette/dimension correctness of the composited frames, that
+frames really reach the OBS virtual camera device, and gaze model save/load.
+
+Needs his eyes: the calibration itself, and whether gaze accuracy is good enough to pick windows in
+practice. Webcam gaze tracking is roughly 2-5° — which is *fine* for "which window am I looking at"
+(a window is orders of magnitude bigger than that error) and useless for pixel targeting. This is
+why gaze is used for targeting and not for pointing.
+
+## 7. Roadmap
 
 Status is only ticked when the phase is implemented *and* its tests pass.
 
@@ -240,19 +336,34 @@ Status is only ticked when the phase is implemented *and* its tests pass.
       rules, the click/close arbitration, the monitor classifier and the filter. No camera needed.
 - [x] **P8 — Docs.** README, this plan, launchers, kanban. Git init + commit. GitHub push
       deliberately left as an explicit request.
+- [x] **P9 — Gaze engine and multi-monitor calibration.** EyeTrax fed from Kinesis's own frames,
+  smoothed, persisted model; calibration wizard that places dots on every monitor and trains
+  against virtual-desktop coordinates.
+- [x] **P10 — Gaze-targeted actions.** Topmost window under the gaze point becomes the gesture
+  target; keyboard gestures focus it and verify before sending keys.
+- [x] **P11 — Virtual camera.** pyvirtualcam → "OBS Virtual Camera", passthrough and
+  chroma-keyable overlay modes, hand overlays on top of EyeTrax's existing overlay.
+- [x] **P12 — Gaze scrolling.** Edge-dwell scrolling with cursor warp, plus gaze-targeted
+  hand scroll.
 
-## 7. Verification
+## 8. Verification
 
 Machine-verified, with the evidence:
 
 | Claim | Evidence |
 |---|---|
-| gesture logic | **53/53** deterministic tests pass (`pytest tests -q`), driven by synthetic landmarks with exact joint angles — no camera involved |
+| gesture logic | **53** deterministic gesture tests pass (`pytest tests -q`), driven by synthetic landmarks with exact joint angles — no camera involved |
+| gaze scrolling | edge band dwell, direction (top = up), ramp to full speed, stop on leaving the band, cooldown, stale-gaze rejection, and the cursor warp that makes the wheel land on the looked-at window |
+| gaze targeting | the target window is carried on the window intents and the focus window on keyboard intents; Alt-Tab focuses the gaze target before opening the switcher |
+| virtual camera | chroma-green overlay canvas, hand skeleton and gaze cursor drawn, HUD optional, passthrough identical to the camera frame when nothing is drawn, gaze mapping monotonic left-to-right — **70 tests total** |
+| the virtual camera is real | `--vcam-test`: 45 frames synchronous at 28.4 fps plus 30 frames through the threaded publish path, 0 dropped, device "OBS Virtual Camera" (backend obs) |
+| gaze-point → window | live check against a window it creates: a point inside resolves to that window, a blocklisted title is skipped, a point outside returns nothing |
 | rotation invariance | open hand still reads OPEN at 0/45/90/135/−90° of in-plane rotation (the specific thing upstream got wrong) |
 | click/flick arbitration | tests assert the close-flick emits **no** click, and that a pinch alone emits exactly one |
 | monitor aiming | the classifier is tested against this machine's real four-display layout (heuristic, calibrated, hysteresis, distance gate, reversed-axis handling) |
 | the OS layer works | `kinesis.py --check` passes: 4 monitors enumerated, virtual desktop 7680x1080, 4 real windows located by monitor, fullscreen detection correct against a live fullscreen overlay window, virtual-key map, camera opened |
 | it actually detects hands | live: 250/251 frames with a hand in view, a hand detected during the build (`Left(0.98)`), MediaPipe world landmarks feeding real yaw/pitch |
+| the OS action layer really acts | `tools/verify_actions.py` 16/16: real `IsIconic`/`IsZoomed` transitions on a window it creates, `SendInput` keys, fullscreen-key choice, dry-run logging, wheel accumulation |
 | latency | 45–48 ms average end-to-end, 81–104 ms peak, measured over a 25 s live run |
 | no silent failure | the first build had the inference thread dying on a bad MediaPipe kwarg *silently*; that class of failure now raises loudly instead, which is how it was found |
 

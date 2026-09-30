@@ -15,6 +15,8 @@ import argparse
 import sys
 import time
 
+import cv2
+
 from kinesis import __version__
 from kinesis import winapi as w
 from kinesis.config import Config, parse_tune_args
@@ -33,6 +35,17 @@ def build_parser() -> argparse.ArgumentParser:
                    help="0 = lite (faster, default), 1 = full (more accurate)")
     p.add_argument("--cursor-hand", choices=("right", "left", "auto"), default=None)
     p.add_argument("--no-filter", action="store_true", help="disable the One-Euro filter (raw landmarks)")
+    p.add_argument("--no-gaze", action="store_true", help="disable eye tracking entirely")
+    p.add_argument("--gaze-model", default=None, help="path to a gaze model .pkl")
+    p.add_argument("--gaze-scroll", choices=("edge", "off"), default=None,
+                   help="eye-driven scrolling: hold your gaze at the top/bottom edge")
+    p.add_argument("--no-vcam", action="store_true", help="do not feed the virtual camera")
+    p.add_argument("--vcam", choices=("passthrough", "overlay", "off"), default=None,
+                   help="passthrough = webcam+overlays as a webcam; overlay = green keyable overlay")
+    p.add_argument("--vcam-test", action="store_true",
+                   help="send a test pattern to the virtual camera and exit")
+    p.add_argument("--gaze-test", action="store_true",
+                   help="print live gaze + the window it targets, and exit on END")
     p.add_argument("--latency-report", action="store_true", help="print latency stats every 5s")
     p.add_argument("--tune", action="append", metavar="KEY=VALUE",
                    help="override any setting from kinesis_config.json (repeatable)")
@@ -51,6 +64,17 @@ def apply_args(args, cfg: Config) -> Config:
         cfg.set("cursor_hand", args.cursor_hand)
     if args.no_filter:
         cfg.set("filter", False)
+    if args.no_gaze:
+        cfg.set("gaze_enabled", False)
+    if args.gaze_model:
+        cfg.set("gaze_model_path", args.gaze_model)
+    if args.gaze_scroll:
+        cfg.set("gaze_scroll_mode", args.gaze_scroll)
+    if args.no_vcam:
+        cfg.set("vcam_enabled", False)
+    if args.vcam:
+        cfg.set("vcam_mode", args.vcam)
+        cfg.set("vcam_enabled", args.vcam != "off")
     if args.latency_report:
         cfg.set("latency_report", True)
     if args.exclusive:
@@ -72,6 +96,46 @@ def cmd_list_monitors() -> int:
         print(f"  {i + 1}. {m}")
         print(f"     work area {m.work}")
     print("\nKinesis indexes monitors left-to-right, matching the numbering above.")
+    return 0
+
+
+def cmd_vcam_test(cfg: Config) -> int:
+    """Prove the virtual camera actually accepts frames (OBS device present and working)."""
+    import numpy as np
+    from kinesis.vcam import VirtualCamera
+    cam = VirtualCamera(cfg, dry=False)
+    if not cam.enabled:
+        print("virtual camera is disabled (vcam_enabled=false or --no-vcam)")
+        return 1
+    if not cam.start(30.0):
+        print(f"[FAIL] {cam.error}")
+        return 1
+    w_, h_ = cam.size
+    print(f"[ok]   virtual camera: {cam.device_info()} {w_}x{h_} mode={cam.mode}")
+    for i in range(45):
+        frame = np.zeros((h_, w_, 3), np.uint8)
+        frame[:, :, 1] = 40
+        frame[10:60, 10:10 + i * 4] = (0, 200, 255)
+        cv2.putText(frame, f"kinesis vcam test {i:02d}", (12, h_ - 16), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5, (255, 255, 255), 1, cv2.LINE_AA)
+        cam.publish_direct(frame)
+        time.sleep(1.0 / 30.0)
+    print(f"[ok]   sent {cam.sent} frames at {cam.current_fps():.1f} fps")
+    # second phase: the real path the app uses (publish -> sender thread -> device)
+    before = cam.sent
+    for i in range(30):
+        frame = np.zeros((h_, w_, 3), np.uint8)
+        frame[:, :, 2] = 60
+        cam.publish(frame)
+        time.sleep(1.0 / 30.0)
+    print(f"[ok]   threaded publish path sent {cam.sent - before} frames "
+          f"(dropped {cam.dropped})")
+    cam.stop()
+    ok = (cam.sent - before) >= 10 and cam.error is None
+    if not ok:
+        print(f"[FAIL] threaded send path: sent={cam.sent - before} error={cam.error}")
+        return 1
+    print("open OBS (or any app) and select 'OBS Virtual Camera' to see it")
     return 0
 
 
@@ -147,12 +211,38 @@ def cmd_check(args, cfg: Config) -> int:
         ok = False
         print(f"[FAIL] tracking pipeline: {exc}")
 
+    # --- gaze + virtual camera ---
+    try:
+        import pyvirtualcam
+        print(f"[ok]   pyvirtualcam {pyvirtualcam.__version__}")
+    except Exception as exc:
+        ok = False
+        print(f"[FAIL] pyvirtualcam: {exc}")
+
+    try:
+        from kinesis.gaze import GazeEngine
+        g = GazeEngine(cfg)
+        from eyetrax import GazeEstimator  # noqa: F401
+        print(f"[ok]   eyetrax importable; gaze model: "
+              f"{'present' if g.is_calibrated else 'NOT CALIBRATED - run calibrate_gaze.bat'}")
+        if g.is_calibrated:
+            if g.start():
+                print(f"[ok]   gaze estimator loaded ({g.model_path.name})")
+                g.stop()
+            else:
+                ok = False
+                print(f"[FAIL] gaze: {g.error}")
+    except Exception as exc:
+        ok = False
+        print(f"[FAIL] gaze stack: {exc}")
+
     print("\nRESULT: " + ("all checks passed" if ok else "problems found above"))
     return 0 if ok else 1
 
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
+    w.set_dpi_aware()          # physical pixels before anything reads a monitor rect
 
     if args.list_monitors:
         return cmd_list_monitors()
@@ -161,6 +251,9 @@ def main(argv=None) -> int:
 
     if args.check:
         return cmd_check(args, cfg)
+
+    if args.vcam_test:
+        return cmd_vcam_test(cfg)
 
     if args.save_config:
         cfg.save()

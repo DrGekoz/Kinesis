@@ -28,7 +28,7 @@ class Hud:
 
     def render(self, frame, poses: Sequence[HandPose], aim, active_action: str,
                state_summary: str, stats, latency_ms: float, note: str = "",
-               cursor: Optional[tuple] = None):
+               cursor: Optional[tuple] = None, gaze=None, extra: Sequence[str] = ()):
         if frame is None:
             return None
         h, w = frame.shape[:2]
@@ -46,6 +46,12 @@ class Hud:
         if bool(self.cfg["hud_detail"]) and poses:
             p = poses[0]
             lines.append(f"yaw : {p.yaw:+.1f}  pitch: {p.pitch:+.1f}  2d: {p.yaw_2d:+.1f}")
+        if gaze is not None:
+            if getattr(gaze, "valid", False):
+                lines.append(f"gaze: {int(gaze.x)},{int(gaze.y)}  age {gaze.age * 1000:3.0f}ms")
+            else:
+                lines.append(f"gaze: stale {gaze.age:.1f}s  face {'yes' if gaze.face else 'no'}")
+        lines.extend(str(x)[:64] for x in extra)
         lines.append(f"fps : cam {stats.capture_fps:4.1f}  inf {stats.inference_fps:4.1f}  "
                      f"e2e {latency_ms:4.0f}ms")
         if cursor:

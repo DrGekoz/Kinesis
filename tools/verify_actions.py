@@ -97,6 +97,23 @@ def main() -> int:
         w.key_tap("b")
         time.sleep(0.3)
         check("test window still alive after key injection", w.user32.IsWindow(w.wintypes.HWND(hwnd)) == 1)
+
+        # gaze targeting: a point inside the window must resolve to that window. This is the lookup
+        # that decides which window a hand gesture lands on.
+        live = w.window_info(hwnd)
+        if live is not None:
+            left, top, right, bottom = live.rect
+            cx, cy = (left + right) // 2, (top + bottom) // 2
+            hit = w.topmost_window_at(cx, cy, monitors, {w.own_process_id()}, ())
+            print(f"      gaze point ({cx},{cy}) -> hwnd {hit}")
+            check("gaze point resolves to the window under it", hit == hwnd)
+            blocked = w.topmost_window_at(cx, cy, monitors, {w.own_process_id()},
+                                          ("kinesis test window",))
+            print(f"      with the title blocklisted -> hwnd {blocked}")
+            check("blocklisted titles are skipped by gaze targeting", blocked != hwnd)
+            outside = w.topmost_window_at(left - 500, top - 500, monitors, {w.own_process_id()}, ())
+            print(f"      a point 500px outside the window -> hwnd {outside}")
+            check("a point outside the window does not return it", outside != hwnd)
     finally:
         # close through the OS rather than killing the process: the venv python is a trampoline,
         # so terminate() would leave the real interpreter (and the window) behind

@@ -11,9 +11,11 @@ from . import winapi as w
 from .actions import ActionRunner
 from .aim import AimClassifier
 from .config import Calibration, Config, load_calibration
-from .gestures import GestureEngine
+from .gaze import GazeEngine
+from .gestures import GazeScroller, GestureEngine
 from .hud import Hud
 from .tracking import TrackingEngine
+from .vcam import VirtualCamera
 
 BANNER = r"""
   _  ___              _
@@ -51,6 +53,9 @@ class KinesisApp:
         self.gestures = GestureEngine(cfg)
         self.runner = ActionRunner(cfg, self.monitors,
                                   dry=cfg["dry_run"] if dry is None else dry)
+        self.gaze = GazeEngine(cfg)
+        self.gaze_scroller = GazeScroller(cfg)
+        self.vcam = VirtualCamera(cfg, dry=cfg["dry_run"] if dry is None else dry)
         self.hud = Hud(cfg, self.monitors)
         self.preview = bool(cfg["preview"] if preview is None else preview)
         self._stop = False
@@ -59,6 +64,10 @@ class KinesisApp:
         self._latencies = []
         self._frames = 0
         self._t0 = time.perf_counter()
+        self._gaze_target = None
+        self._gaze_target_at = 0.0
+        self._gaze_target_title = ""
+        self._prev = None
 
     # ------------------------------------------------------------------ lifecycle
     def _install_signals(self):
@@ -83,6 +92,11 @@ class KinesisApp:
                       f"(+/-{t.yaw_std:.1f})")
         else:
             print("aim calibration: none yet - run calibrate.py for accurate screen aiming")
+        print(f"gaze: {'model ' + str(self.gaze.model_path.name) if self.gaze.is_calibrated else 'no model - run calibrate_gaze.bat'}"
+              f"   target window from gaze: {self.cfg['gaze_target_enabled']}"
+              f"   scroll: {self.cfg['gaze_scroll_mode']}")
+        print(f"virtual camera: {self.cfg['vcam_mode'] if self.cfg['vcam_enabled'] else 'off'} "
+              f"({self.cfg['vcam_width']}x{self.cfg['vcam_height']} @ {self.cfg['vcam_fps']})")
         print(f"cursor hand: {self.cfg['cursor_hand']}   filter: {self.cfg['filter']} "
               f"(cutoff {self.cfg['filter_min_cutoff']}, beta {self.cfg['filter_beta']})   "
               f"model_complexity: {self.cfg['model_complexity']}")
@@ -93,6 +107,33 @@ class KinesisApp:
         print(GESTURE_HELP)
 
     # ------------------------------------------------------------------ loop
+    def _resolve_gaze_target(self, gaze, now: float):
+        """Turn the gaze point into the window the user is looking at. Rate limited: the window
+        walk is an EnumWindows sweep and gaze only refreshes at gaze_hz anyway."""
+        if not bool(self.cfg["gaze_target_enabled"]) or not getattr(gaze, "valid", False):
+            return self._gaze_target
+        if now - self._gaze_target_at < float(self.cfg["gaze_target_refresh_s"]):
+            return self._gaze_target
+        self._gaze_target_at = now
+        hwnd = w.topmost_window_at(int(gaze.x), int(gaze.y), self.monitors,
+                                   {w.own_process_id()},
+                                   self.cfg.get("window_title_blocklist") or ())
+        if hwnd and hwnd != self._gaze_target:
+            info = w.window_info(hwnd, self.monitors)
+            self._gaze_target_title = (info.title[:48] if info else "")
+        self._gaze_target = hwnd
+        return hwnd
+
+    def _publish_vcam(self, frame, poses, gaze) -> None:
+        if not self.vcam.enabled:
+            return
+        extra = []
+        if self._gaze_target_title:
+            extra.append(f"target: {self._gaze_target_title}")
+        composed = self.vcam.composite(frame, poses, gaze, extra)
+        if composed is not None:
+            self.vcam.publish(composed)
+
     def run(self) -> int:
         self._install_signals()
         if not self.engine.start():
@@ -100,6 +141,10 @@ class KinesisApp:
             return 2
         w0, h0 = self.engine.frame_size
         self.gestures.set_frame_size(w0, h0)
+        if self.gaze.enabled:
+            self.gaze.start()
+        cam_fps = self.engine.camera.fps or float(self.cfg["vcam_fps"])
+        self.vcam.start(cam_fps)
         time.sleep(0.3)                       # let the threads fill their slots
         try:
             while not self._stop:
@@ -108,13 +153,19 @@ class KinesisApp:
                 w1, h1 = self.engine.frame_size
                 self.gestures.set_frame_size(w1, h1)
 
+                # gaze is fed the raw (unmirrored) frame the estimator was calibrated on
+                gaze_state = self.gaze.update(self.engine.raw_frame(), now)
+                target_hwnd = self._resolve_gaze_target(gaze_state, now)
+
                 primary = self.gestures.primary_hand(poses)
                 aim = None
                 if primary is not None and bool(self.cfg["aim_enabled"]):
                     aim = self.aim.classify(primary.yaw, primary.pitch)
 
-                intents = self.gestures.update(poses, aim.index if aim else None, now,
-                                               max(now - getattr(self, "_prev", now), 1e-4))
+                dt = max(now - self._prev, 1e-4) if self._prev else 1e-4
+                intents = self.gestures.update(poses, aim.index if aim else None, now, dt,
+                                              target_hwnd=target_hwnd)
+                intents.extend(self.gaze_scroller.update(gaze_state, now, dt))
                 self._prev = now
                 if bool(self.cfg["exclusive"]):
                     intents = [i for i in intents if i.kind == "cursor.move"]
@@ -122,11 +173,19 @@ class KinesisApp:
                 self.runner.tick(now)
                 self.runner.execute(intents)
 
+                self._publish_vcam(frame, poses, gaze_state)
+
                 if frame is not None and self.preview:
+                    extra = []
+                    if self._gaze_target_title:
+                        extra.append(f"target: {self._gaze_target_title}")
+                    extra.append(self.vcam.status_line() if self.vcam.enabled else "vcam: off")
+                    extra.append(self.gaze_scroller.status())
                     view = self.hud.render(
                         frame, poses, aim, self.runner.last_action,
                         self.gestures.state_summary(), self.engine.stats, latency * 1000.0,
-                        note=self.gestures.last_note, cursor=self.gestures._cursor)
+                        note=self.gestures.last_note, cursor=self.gestures._cursor,
+                        gaze=gaze_state, extra=extra)
                     if view is not None:
                         cv2.imshow(self._window, view)
                         key = cv2.waitKey(1) & 0xFF
@@ -167,15 +226,20 @@ class KinesisApp:
         elapsed = time.perf_counter() - self._t0
         print(f"[latency] loop {self._frames / elapsed:5.1f} fps | cam {stats.capture_fps:5.1f} fps | "
               f"inference {stats.inference_fps:5.1f} fps / {stats.inference_ms:4.1f} ms | "
-              f"end-to-end avg {avg:4.0f} ms peak {top:4.0f} ms")
+              f"end-to-end avg {avg:4.0f} ms peak {top:4.0f} ms"
+              + (f" | gaze {self.gaze.status_line()} | vcam {self.vcam.status_line()}"
+                 if self.gaze.enabled or self.vcam.enabled else ""))
 
     def shutdown(self):
+        self.gaze_scroller.release()
         intents = self.gestures.release_all(reason="shutdown")
         try:
             self.runner.execute(intents)
             self.runner.release_all()
         except Exception:
             pass
+        self.vcam.stop()
+        self.gaze.stop()
         self.engine.stop()
         if self.preview:
             try:

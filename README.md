@@ -47,6 +47,51 @@ you were pointing at, not just whatever happened to have focus.
 - Scroll, drag and swipe take ownership of the cursor while active; only one held action runs at a
   time.
 
+## Gaze: which window the gestures land on
+
+Eye tracking (EyeTrax) decides the **target window**. Look at a window, make a hand gesture, and the
+gesture applies to that window — not to whatever happens to have focus. This is what makes gestures
+usable across four screens: you no longer have to bring a window forward by hand first.
+
+Two consequences worth knowing:
+
+- Keyboard gestures (tab swipes, Alt-Tab) need a *focused* window, so Kinesis focuses the gaze
+  target first and verifies the OS agreed before sending keys. Browsers ignore Ctrl+Tab otherwise.
+- The mouse wheel goes to the window under the **cursor**, so gaze scrolling parks the cursor on the
+  gaze point first (turn it off with `gaze_scroll_warp_cursor: false`).
+
+Calibrate it once, then re-run only if you move the chair:
+
+```
+calibrate_gaze.bat              all four monitors, 5 points each, ~40 seconds of looking at dots
+calibrate_gaze.bat --points 9   more points, better accuracy
+calibrate_gaze.bat --monitors 3 only the screen you actually work on
+```
+
+It prints two numbers: the in-sample pixel error and the **monitor hit rate** — the metric that
+decides whether targeting works. Below ~85% means you moved your head during it.
+
+## Virtual camera: stream the webcam while Kinesis is using it
+
+Kinesis can send the camera feed back out as a webcam, so the tracking overlays are visible to
+anything that consumes a camera (OBS, Discord, Zoom, Teams). Two modes:
+
+```
+--vcam passthrough    the webcam frame with the hand skeleton, gaze point and status drawn on it
+--vcam overlay        EyeTrax's chroma-keyable look: flat green canvas, gaze cursor, plus the hand
+                      overlays composited on top — key the green out and lay it over your real video
+--no-vcam             no virtual camera at all
+```
+
+This needs **OBS Studio installed** — its virtual-camera driver is what provides the "OBS Virtual
+Camera" device that `pyvirtualcam` talks to. It is already installed on this machine (verified: 45
+direct frames and 30 frames through the threaded publish path, 0 dropped).
+
+Sending happens on its own thread with a newest-frame-only slot. `pyvirtualcam` paces with
+`sleep_until_next_frame()`, which blocks for a whole frame interval — up to 66 ms at this camera's
+15 fps — and calling that from the tracking loop would add exactly the latency the rest of the
+project spent its effort removing.
+
 ## Aiming at a monitor
 
 Point your index finger at a screen; Kinesis reports and uses the monitor you are indicating.
@@ -128,21 +173,30 @@ kinesis/
   filters.py    One-Euro filter (scalar and per-landmark 2D)
   pose.py       joint-angle finger states, pose classification, pointing angles
   aim.py        calibrated / heuristic monitor classification with hysteresis
-  gestures.py   pose-transition state machine -> intents (no Windows calls: fully testable)
-  actions.py    intents -> Windows actions, aimed window targeting, deferred fullscreen->minimise
-  hud.py        preview overlay (pose, aim, action, fps, latency)
+  gestures.py   pose-transition state machine -> intents, plus the gaze edge-scroller (no Windows
+                calls: fully testable)
+  actions.py    intents -> Windows actions, gaze/aim window targeting, focus-before-keyboard,
+                deferred fullscreen->minimise
+  gaze.py       EyeTrax wrapped around Kinesis's own frames: rate-limited, smoothed, persisted model
+  vcam.py       virtual camera: passthrough and chroma-keyable overlay, on its own sender thread
+  hud.py        preview overlay (pose, aim, gaze, target window, action, fps, latency)
   app.py        wiring + main loop
 ```
 
 The gesture engine emits `Intent` objects and never touches the OS, which is why the whole gesture
-layer is covered by deterministic tests with no camera involved.
+layer is covered by deterministic tests with no camera involved. Gaze resolution and window
+targeting happen in the caller and travel on the intent (`target_hwnd`, `focus_hwnd`), so the same
+tests cover gaze-targeted behaviour without an eye tracker.
 
 ## Tests
 
 ```
 .venv\Scripts\python -m pytest tests -q
-53 passed
+70 passed
 ```
+
+`tools/verify_actions.py` is the live counterpart: 16 checks against real windows, real window state
+and the real virtual camera device.
 
 Landmark geometry is synthesised with exact joint angles (extended finger = collinear = 180°,
 curled = rotated at the PIP = 70°), so every classification is checked against a known-correct
@@ -192,6 +246,19 @@ comparison below). `awesome-hand-pose-estimation` is the curated research list t
 project; see [Provenance](#provenance) for the parts of it that matter here.
 
 ## Known limits
+
+- The C920 on this machine reports **15 fps** at 640x480 for both YUYV and MJPG even when asked for
+  30, so ~65 ms of frame interval is the floor under the end-to-end figure. Lowering capture
+  resolution does not raise it.
+- Aiming and gaze both come from one webcam, so both need calibration and both drift when the chair
+  moves. Gaze is accurate enough to choose *which window*, not to choose a pixel.
+- MediaPipe world landmarks are an estimate: a hand pointing straight at the camera is foreshortened
+  and finger angles get less reliable. Pinches are scale-relative so they survive it; the flick
+  gestures are the ones to watch.
+- Multi-monitor gaze needs `calibrate_gaze.bat` — EyeTrax's own calibration only knows the primary
+  monitor, which is why Kinesis ships its own.
+- The virtual camera needs OBS Studio's driver. Without it `pyvirtualcam` has no device to write to
+  and Kinesis says so and carries on without it.
 
 - **One webcam cannot truly know** which monitor you are pointing at — it infers it from hand
   orientation, and calibration is what makes that reliable. Redo it if you move the camera, your

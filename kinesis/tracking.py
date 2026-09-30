@@ -143,6 +143,7 @@ class InferenceThread(threading.Thread):
         self._lock = threading.Lock()
         self._hands: List[RawHand] = []
         self._frame = None
+        self._raw_frame = None
         self._stamp = 0.0
         self._seq = -1
         self._stop = threading.Event()
@@ -188,6 +189,7 @@ class InferenceThread(threading.Thread):
             if frame is None:
                 time.sleep(0.001)
                 continue
+            raw_frame = frame          # keep the unmirrored reference: cv2.flip returns a new array
             if mirror:
                 frame = cv2.flip(frame, 1)
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -222,6 +224,7 @@ class InferenceThread(threading.Thread):
             with self._lock:
                 self._hands = hands
                 self._frame = frame
+                self._raw_frame = raw_frame
                 self._stamp = captured
                 self._seq = seq
             self.inferred += 1
@@ -230,6 +233,12 @@ class InferenceThread(threading.Thread):
     def latest(self):
         with self._lock:
             return list(self._hands), self._frame, self._stamp, self._seq
+
+    def latest_raw(self):
+        """The unmirrored frame, for gaze (calibrated on raw frames). Not consumed - it is a
+        second view of the same inference result."""
+        with self._lock:
+            return self._raw_frame, self._stamp
 
     def stop(self):
         self._stop.set()
@@ -359,3 +368,7 @@ class TrackingEngine:
         if not poses:
             return "no hands"
         return ", ".join(f"{p.handedness}({p.confidence:.2f})" for p in poses)
+
+    def raw_frame(self):
+        """The unmirrored camera frame the gaze estimator must be fed."""
+        return self.inference.latest_raw()[0] if self.inference else None

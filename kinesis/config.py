@@ -88,6 +88,34 @@ DEFAULTS: Dict[str, Any] = {
     "youtube_fs_key": "f",
     "generic_fs_key": "f11",
 
+    # --- gaze (EyeTrax) ---
+    "gaze_enabled": True,
+    "gaze_model_path": "gaze_model.pkl",
+    "gaze_smoother": "kalman_ema",      # kalman_ema | kalman | none
+    "gaze_ema_alpha": 0.25,             # higher = smoother, more lag (eyetrax convention)
+    "gaze_hz": 10.0,                    # face landmarking is rate limited; hands stay at camera rate
+    "gaze_max_age_s": 0.6,              # a stale point stops counting as "looking at"
+    "gaze_target_enabled": True,        # gaze selects the target window for gestures
+    "gaze_target_refresh_s": 0.1,
+    "gaze_scroll_mode": "edge",         # edge | off
+    "gaze_scroll_edge": 0.12,           # fraction of screen height at top/bottom
+    "gaze_scroll_dwell_s": 0.25,        # how long to hold the gaze there before it engages
+    "gaze_scroll_ramp_s": 0.5,          # ramp to full speed over this long
+    "gaze_scroll_speed": 480,           # wheel units per second at full strength
+    "gaze_scroll_cooldown_s": 0.4,
+    "gaze_scroll_warp_cursor": True,    # park the cursor on the gaze point so the wheel lands there
+
+    # --- virtual camera ---
+    "vcam_enabled": True,
+    "vcam_mode": "passthrough",         # passthrough | overlay | off
+    "vcam_width": 640,
+    "vcam_height": 480,
+    "vcam_fps": 30,
+    "vcam_overlay_size": [1920, 1080],
+    "vcam_backend": "",                 # obs | unitycapture | "" = auto
+    "vcam_show_landmarks": True,
+    "vcam_show_hud": True,
+
     # --- aim ---
     "aim_enabled": True,
     "aim_hysteresis_deg": 7.0,         # must beat the current monitor by this margin
