@@ -163,7 +163,8 @@ def test_window_gesture_carries_the_gaze_target():
 
 
 def test_tab_swipe_carries_a_focus_target():
-    engine = GestureEngine(cfg_with(swipe_min_fraction=0.10, swipe_window_s=0.25))
+    engine = GestureEngine(cfg_with(swipe_min_fraction=0.10, swipe_window_s=0.25,
+                                    swipe_action="tab"))   # opt back into the replaced binding
     now = 1000.0
     out = []
     # an open hand travelling right fast enough to count as a swipe

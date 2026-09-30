@@ -6,14 +6,14 @@
 
 Control Windows with your hands through one webcam. Look at a window and it becomes the target; move your index finger and the cursor goes there. No keyboard, no mouse, no wearable.
 
-**11 gestures · gesture locking · desk geometry · multi-monitor · ~46 ms · gaze targeting · gaze tab clicks · desktop overlay · dictation into the field you look at · virtual camera · 158 tests**
+**11 gestures · gesture locking · desk geometry · multi-monitor · ~46 ms · gaze targeting · gaze tab clicks · desktop overlay · dictation into the field you look at · virtual camera · 162 tests**
 
 <a href="https://github.com/DrGekoz/Kinesis/stargazers"><img src="https://img.shields.io/github/stars/DrGekoz/Kinesis?style=for-the-badge&color=f59e0b" alt="Stars"></a>
 <a href="https://github.com/DrGekoz/Kinesis/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-MIT-22c55e?style=for-the-badge" alt="License"></a>
 <img src="https://img.shields.io/badge/platform-Windows-06b6d4?style=for-the-badge" alt="Platform">
 <img src="https://img.shields.io/badge/python-3.11-8b5cf6?style=for-the-badge" alt="Python">
 <img src="https://img.shields.io/badge/latency-~46ms-f43f5e?style=for-the-badge" alt="Latency">
-<img src="https://img.shields.io/badge/tests-158%20passing-22c55e?style=for-the-badge" alt="Tests">
+<img src="https://img.shields.io/badge/tests-162%20passing-22c55e?style=for-the-badge" alt="Tests">
 <img src="https://img.shields.io/badge/virtual%20camera-OBS-8b5cf6?style=for-the-badge" alt="Virtual camera">
 
 [Gestures](#gestures) · [Quick start](#quick-start) · [Install](#install) · [Calibration](#calibration) · [Gaze](#gaze) · [Overlay](#overlay) · [Dictation](#dictation) · [Config](#config) · [Troubleshooting](#troubleshooting) · [Credits](#credits)
@@ -48,7 +48,8 @@ Built for desks with several monitors, not one. Your eyes track what you are foc
 | Thumb + middle pinch | Right click |
 | Thumb + ring pinch, held | **Adaptive scroll** — hand travel drives the wheel, gain rises with speed, cursor freezes |
 | Thumb + pinky pinch, held | Drag — text selection, files |
-| Open hand, quick lateral swipe | Previous / next browser tab |
+| Right fist held + left index pinch | Next browser tab (`Ctrl+Tab`) |
+| Right fist held + left middle pinch | Previous browser tab (`Ctrl+Shift+Tab`) |
 | Open hand → closed fist | Minimise the target window (exiting fullscreen first) |
 | Closed fist → open hand | Maximise; if maximised, fullscreen (`f` on YouTube, `F11` elsewhere) |
 | Thumb + pinky out, other three curled | Hold `Ctrl+Space` — push-to-talk dictation |
@@ -192,6 +193,9 @@ Everything lives in `kinesis_config.json` and every key can be overridden live w
 | `scroll_confirm_frames` / `scroll_release_frames` | 2 / 3 | Hold to start, flicker-tolerance to stop |
 | `scroll_gain` / `scroll_smooth` / `scroll_deadband_px` | 1.0 / 0.45 / 1.5 | Scroll speed, smoothing, jitter floor |
 | `alt_tab_hold_s` / `alt_tab_session_timeout_s` | 2.0 / 30.0 | Left-fist hold, and the Alt release safety |
+| `ctrl_tab_hold_s` / `ctrl_tab_repeat_s` | 0.6 / 0.35 | Right-fist hold to open Ctrl-Tab, and the re-tap rate |
+| `ctrl_tab_flick_guard` | two_hands | A right fist holds Ctrl instead of minimising while the left hand is in frame |
+| `swipe_action` | none | The old lateral-swipe tab binding — replaced, off by default |
 | `ptt_keys` | ctrl, space | The dictation hotkey the shaka holds |
 | `gaze_target_enabled` | true | Gaze picks the target window |
 | `gaze_focus_enabled` / `gaze_focus_dwell_s` | true / 0.15 | Looking at a window focuses it |
@@ -214,7 +218,8 @@ Everything lives in `kinesis_config.json` and every key can be overridden live w
 | Cursor jitters | `--tune filter_min_cutoff=1.2 deadband_px=2.5 --save-config` |
 | Cursor feels laggy | Raise `filter_beta`, or `filter: false` for raw landmarks |
 | Scrolling jumps or fights you | `scroll_smooth` up (0.6), `scroll_deadband_px` up, `scroll_gain` down |
-| Alt-Tab is not switching | Hold the left fist the full 2 s, then pinch index-to-thumb on the right hand |
+| Alt-Tab is not switching | Hold the LEFT fist the full 2 s, then pinch index-to-thumb on the right hand |
+| Ctrl+Tab is not switching | Right fist held `ctrl_tab_hold_s` (0.6 s), then pinch on the LEFT hand. If minimise fires instead, raise `ctrl_tab_flick_guard` back to `two_hands` |
 | Gestures act on the wrong window | `calibrate_gaze.bat`, check the hit rate; or `calibrate.bat` for aiming |
 | Clicking a tab does nothing | Gaze has to be calibrated — an invalid gaze point cannot be warp-targeted. `tools/check_tabs.py` confirms the strip is being found |
 | Dictation types into the wrong place | `tools/check_focus.py` shows what the hit test sees; `ptt_focus_mode=uia` only clicks fields it can confirm, `off` disables the click entirely |
@@ -225,7 +230,7 @@ Everything lives in `kinesis_config.json` and every key can be overridden live w
 ## Verification
 
 ```bat
-.venv\Scripts\python -m pytest tests -q       158 passed
+.venv\Scripts\python -m pytest tests -q       162 passed
 .venv\Scripts\python tools\verify_actions.py  16/16 live OS checks
 .venv\Scripts\python tools\verify_overlay.py  12/12 against the real compositor
 .venv\Scripts\python tools\check_tabs.py      tab-strip detection against your open browsers
@@ -234,7 +239,7 @@ Everything lives in `kinesis_config.json` and every key can be overridden live w
 check.bat                                     all of the above, in order
 ```
 
-158 tests cover every gesture, the pose classifier, the click/flick arbitration, gesture locking, the
+162 tests cover every gesture, the pose classifier, the click/flick arbitration, gesture locking, the
 Alt-Tab session, gaze targeting and focus, desk geometry against a hand-built EDID block, overlay
 rendering, and release-all safety — with landmark geometry synthesised at exact joint angles rather
 than recorded, so each classification is checked against a known-correct input.

@@ -66,6 +66,20 @@ DEFAULTS: Dict[str, Any] = {
     "swipe_max_vertical_fraction": 0.14,
     "swipe_cooldown_s": 0.7,
     "alt_tab_hold_s": 2.0,             # left fist held this long opens the switcher
+    # --- Ctrl-Tab: right-hand fist holds Ctrl, left hand taps through browser tabs ---
+    # The mirror of Alt-Tab; which hand holds the modifier is the only thing that tells them apart.
+    "ctrl_tab_enabled": True,
+    "ctrl_tab_hold_s": 0.6,            # right fist held this long opens the session
+    "ctrl_tab_repeat_s": 0.35,         # re-tap rate while the left pinch stays held
+    "ctrl_tab_session_timeout_s": 30.0,
+    # A right fist is also the close-flick (minimise), so this collision needs a rule:
+    #   two_hands  = a right fist never minimises while the left hand is in frame (default)
+    #   left_pinch = only while the left hand is actually pinching
+    #   off        = the flick always wins
+    "ctrl_tab_flick_guard": "two_hands",
+    # The open-hand lateral swipe no longer switches tabs - the two-hand gesture replaced it.
+    # "tab" restores the old binding; "none" leaves the swipe detected but silent.
+    "swipe_action": "none",
     "alt_tab_repeat_s": 0.35,          # held right pinch repeats Tab
     "ptt_arm_s": 0.15,                 # shaka must hold this long before the dictation hotkey
     # The push-to-talk hotkey the shaka gesture holds. ctrl+space is the Windows default binding

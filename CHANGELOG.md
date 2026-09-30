@@ -5,6 +5,52 @@ All notable changes to Kinesis. The README stays compact on purpose: this is whe
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are
 [semantic](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] — Ctrl+Tab gets its own two-hand gesture
+
+The open-hand lateral swipe stopped switching browser tabs. In its place, the mirror of Alt-Tab.
+
+### Added
+
+- **Right-hand fist + left index pinch → `Ctrl+Tab`** (next tab), and **+ left middle pinch →
+  `Ctrl+Shift+Tab`** (previous tab). The right fist is held `ctrl_tab_hold_s` (0.6 s) to open the
+  session, `Ctrl` stays down for the whole session, each pinch taps on its rising edge and repeats
+  while held, and `Ctrl` is released when the fist opens or after
+  `ctrl_tab_session_timeout_s`. The session takes the gesture lock, so nothing else can start
+  mid-switch.
+- **Taps inside the session send bare `Tab`/`Shift+Tab`**, deliberately not `Ctrl+Tab`: a tap that
+  pressed Ctrl itself would lift the modifier on release and end the session after one tab.
+
+### The collision this created, and the rule for it
+
+A right fist is *already* the close-flick that minimises a window. Which hand holds the modifier is
+the only thing that distinguishes Ctrl-Tab from Alt-Tab, so the right fist has to mean "hold Ctrl" —
+and that clashes head-on with minimise. `ctrl_tab_flick_guard` decides:
+
+    two_hands  (default)  a right fist never minimises while the left hand is in frame
+    left_pinch            only while the left hand is actually pinching
+    off                   the flick always wins; Ctrl-Tab then needs the pinch held first
+
+The first implementation of this guard fired on a single hand, because `_select_hands` returns the
+same hand for both roles when only one hand is in frame — which silently broke ordinary minimise.
+`_other_hand()` now excludes exactly that case, and `test_close_flick_minimises` and
+`test_landmarks_to_minimise_end_to_end` catch it.
+
+### Changed
+
+- **`swipe_action: none`.** The swipe is still detected and still tested, it just does nothing.
+  `swipe_action=tab` restores the old binding.
+
+### Verified
+
+- 162 tests. The new gesture: Ctrl down on open, forward tap on the rising edge, backward tap with
+  the middle finger, Ctrl released when the fist opens, and a left pinch with no session sending
+  nothing at all. The flick guard: a right fist alone still minimises (both unit and landmark-level),
+  while a right fist with the left hand in frame holds Ctrl instead.
+- The four swipe tests now opt in with `swipe_action="tab"`, plus a new test that the default is
+  silent — so the replaced behaviour is verified rather than deleted.
+
+---
+
 ## [1.5.0] — dictate into the field you are looking at
 
 The dictation gesture now puts the caret where you are looking before it starts listening.

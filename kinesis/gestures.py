@@ -61,6 +61,11 @@ class GestureEngine:
         # held-state
         self.active: Optional[str] = None          # scroll | drag | swipe
         self.lock: Optional[str] = None            # the gesture that owns the hand right now
+        self.ctrl_held = False                     # Ctrl-Tab modifier session
+        self._right_fist_since: Optional[float] = None
+        self._ctrl_tab_session_start = 0.0
+        self._t_ctrl_tab = 0.0
+        self._prev_left_finger: Optional[str] = None
         self._lock_since = 0.0
         self._scroll_release = 0
         self._scroll_smooth_y: Optional[float] = None
@@ -163,6 +168,50 @@ class GestureEngine:
             return True
         return False
 
+    def _other_hand(self, primary: Optional[HandPose],
+                    left_hand: Optional[HandPose]) -> Optional[HandPose]:
+        """The hand that is NOT the cursor hand.
+
+        With one hand in frame `_select_hands` can return the same hand for both, which would make
+        every two-handed rule fire on a single hand - that is how a lone right fist stopped being a
+        minimise.
+        """
+        if left_hand is None or left_hand is primary:
+            return None
+        return left_hand
+
+    def _left_tap_finger(self, left_hand: Optional[HandPose]) -> Optional[str]:
+        """Which tab-tap the left hand is making: index = next, middle = previous."""
+        if left_hand is None:
+            return None
+        if left_hand.pinches.get("index"):
+            return "index"
+        if left_hand.pinches.get("middle"):
+            return "middle"
+        return None
+
+    def _ctrl_tab_holding(self, primary: Optional[HandPose],
+                          left_hand: Optional[HandPose] = None) -> bool:
+        """Is this right-hand fist the Ctrl modifier rather than a close-flick?
+
+        Which hand holds the modifier is the only thing that tells Ctrl-Tab from Alt-Tab, so a right
+        fist has to be able to mean "hold Ctrl" - and that collides with the right hand's own
+        close-flick (minimise). The guard is deliberate: while the left hand is in frame, a right
+        fist is treated as the modifier. `ctrl_tab_flick_guard` relaxes it to `left_pinch` (only
+        while the left hand is actually pinching) or `off` if you would rather the flick always win.
+        """
+        if not bool(self.cfg["ctrl_tab_enabled"]) or not self._is_fist(primary):
+            return False
+        if self.ctrl_held:
+            return True
+        guard = str(self.cfg["ctrl_tab_flick_guard"]).lower()
+        if guard == "off":
+            return False
+        other = self._other_hand(primary, left_hand)
+        if self._left_tap_finger(other) is not None:
+            return True
+        return guard == "two_hands" and other is not None
+
     def _confirm(self, key: str, value: bool, need: int = CONFIRM_FRAMES) -> bool:
         n = self._counters.get(key, 0)
         n = n + 1 if value else 0
@@ -236,10 +285,17 @@ class GestureEngine:
                 out.extend(self._cursor_intent(primary))
             return out
 
+        # ---------------- Ctrl-Tab modifier (right hand fist, left hand taps) ----------------
+        out.extend(self._update_ctrl_tab(primary, left_hand, now, target_hwnd, can_start))
+        if self.ctrl_held:
+            # the cursor hand is a fist here: nothing to point with, and nothing else may start
+            return out
+
         # ---------------- pose transitions: flicks ----------------
         if fist_conf and self._state != "fist":
-            if can_start and (now - self._t_open) <= float(self.cfg["flick_window_s"]) \
-                    and (now - self._t_flick) > 0.8:
+            if (can_start and not self._ctrl_tab_holding(primary, left_hand)
+                    and (now - self._t_open) <= float(self.cfg["flick_window_s"])
+                    and (now - self._t_flick) > 0.8):
                 out.append(Intent("window.minimise", monitor=aim_index, target_hwnd=target_hwnd,
                                   note="close flick"))
                 self._t_flick = now
@@ -434,8 +490,77 @@ class GestureEngine:
             return []
         return [Intent("mouse.wheel", amount=units)]
 
+    def _update_ctrl_tab(self, primary: Optional[HandPose], left_hand: Optional[HandPose],
+                         now: float, target_hwnd: Optional[int] = None,
+                         can_start: bool = True) -> List[Intent]:
+        """Right-hand fist holds Ctrl; the left hand taps through browser tabs.
+
+        The mirror of Alt-Tab, and the one gesture pair that is deliberately not interchangeable:
+        which hand holds the modifier is the only thing that distinguishes Ctrl-Tab from Alt-Tab.
+        `Ctrl` stays down for the whole session, so a tap is just `Tab` (or `Shift+Tab` back) - a tap
+        that pressed Ctrl itself would lift the modifier again on release.
+        """
+        out: List[Intent] = []
+        if not bool(self.cfg["ctrl_tab_enabled"]):
+            return out
+        right_fist = self._is_fist(primary)
+        other = self._other_hand(primary, left_hand)
+        finger = self._left_tap_finger(other)
+
+        if not self.ctrl_held:
+            if right_fist and can_start:
+                if self._right_fist_since is None:
+                    self._right_fist_since = now
+                    self.last_note = "right fist: hold to open Ctrl-Tab"
+                elif (now - self._right_fist_since) >= float(self.cfg["ctrl_tab_hold_s"]):
+                    self.ctrl_held = True
+                    self._ctrl_tab_session_start = now
+                    self._prev_left_finger = finger
+                    self._take_lock("ctrl_tab", now)
+                    out.append(Intent("keys.down", keys=("ctrl",), focus_hwnd=target_hwnd,
+                                      note="ctrl-tab modifier"))
+                    self.last_note = "ctrl-tab open (Ctrl held)"
+            else:
+                self._right_fist_since = None
+            return out
+
+        # ---- session open: Ctrl is down ----
+        if not right_fist:
+            self.ctrl_held = False
+            out.append(Intent("keys.up", keys=("ctrl",), note="ctrl-tab commit"))
+            self._release_lock(now)
+            self._prev_left_finger = None
+            self.last_note = "ctrl-tab done (Ctrl released)"
+            return out
+        if (now - self._ctrl_tab_session_start) > float(self.cfg["ctrl_tab_session_timeout_s"]):
+            self.ctrl_held = False
+            self._right_fist_since = None
+            out.append(Intent("keys.up", keys=("ctrl",), note="ctrl-tab timeout"))
+            self._release_lock(now)
+            self._prev_left_finger = None
+            self.last_note = "ctrl-tab timeout (Ctrl released)"
+            return out
+
+        rising = finger is not None and finger != self._prev_left_finger
+        held = finger is not None and finger == self._prev_left_finger
+        if finger == "index" and (rising or (held and (now - self._t_ctrl_tab)
+                                              >= float(self.cfg["ctrl_tab_repeat_s"]))):
+            out.append(Intent("keys.tap", keys=("tab",), focus_hwnd=target_hwnd, note="next tab"))
+            self._t_ctrl_tab = now
+            self.last_note = "ctrl-tab: next tab"
+        elif finger == "middle" and (rising or (held and (now - self._t_ctrl_tab)
+                                                >= float(self.cfg["ctrl_tab_repeat_s"]))):
+            out.append(Intent("keys.tap", keys=("shift", "tab"), focus_hwnd=target_hwnd,
+                              note="previous tab"))
+            self._t_ctrl_tab = now
+            self.last_note = "ctrl-tab: previous tab"
+        self._prev_left_finger = finger
+        return out
+
     def _swipe_detect(self, primary: HandPose, now: float,
                       target_hwnd: Optional[int] = None) -> Optional[Intent]:
+        if str(self.cfg["swipe_action"]).lower() == "none":
+            return None                     # the Ctrl-Tab gesture replaced the swipe binding
         win = float(self.cfg["swipe_window_s"])
         self._swipe_samples.append((now, primary.palm_px[0], primary.palm_px[1]))
         self._swipe_samples = [s for s in self._swipe_samples if now - s[0] <= win]
@@ -529,6 +654,9 @@ class GestureEngine:
         self.active = None
         self.lock = None
         self.alt_held = False
+        self.ctrl_held = False
+        self._right_fist_since = None
+        self._prev_left_finger = None
         self.ptt_held = False
         self._scroll_anchor = None
         self._scroll_smooth_y = None

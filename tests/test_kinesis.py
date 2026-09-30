@@ -534,6 +534,7 @@ def test_drag_does_not_freeze_cursor(cfg):
 
 # ============================================================ gestures: swipe
 def test_swipe_right_next_tab(cfg):
+    cfg.set("swipe_action", "tab")     # the swipe binding is opt-in now; this test covers it
     d = Driver(cfg)
     xs = (0.30, 0.38, 0.47, 0.56, 0.65, 0.74)
     for x in xs:
@@ -543,6 +544,7 @@ def test_swipe_right_next_tab(cfg):
 
 
 def test_swipe_left_previous_tab(cfg):
+    cfg.set("swipe_action", "tab")     # the swipe binding is opt-in now; this test covers it
     d = Driver(cfg)
     for x in (0.74, 0.65, 0.56, 0.47, 0.38, 0.30):
         d.feed([make_pose(cfg, **OPEN, palm=(x, 0.6), tip=(x, 0.5))], steps=1)
@@ -558,6 +560,7 @@ def test_swipe_needs_an_open_hand(cfg):
 
 
 def test_swipe_has_a_cooldown(cfg):
+    cfg.set("swipe_action", "tab")     # the swipe binding is opt-in now; this test covers it
     d = Driver(cfg)
     for sweep in range(2):
         for x in (0.30, 0.45, 0.60, 0.75):

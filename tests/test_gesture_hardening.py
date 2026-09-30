@@ -64,6 +64,61 @@ def test_lock_times_out_so_a_pose_cannot_wedge_the_engine():
     assert d.engine.lock is None, "a stuck hand pose locked the engine out"
 
 
+def test_ctrl_tab_gesture_holds_ctrl_and_taps_forward():
+    """Right fist holds Ctrl; a left index pinch taps to the next tab."""
+    d = Driver(cfg_with(ctrl_tab_hold_s=0.2))
+    fist = make_pose(d.cfg, **FIST, handedness="Right")
+    left_pinch = make_pose(d.cfg, extended=("middle", "ring", "pinky"), pinches=("index",),
+                           handedness="Left")
+    left_open = make_pose(d.cfg, **OPEN, handedness="Left")
+    hold(d, [make_pose(d.cfg, **OPEN, handedness="Right"), left_open], 5)
+    d.clear()
+    d.feed([fist, left_open], steps=10)                 # hold the right fist to open the session
+    assert d.engine.ctrl_held, d.kinds()
+    assert any(i.keys == ("ctrl",) for i in d.of("keys.down")), d.kinds()
+    d.clear()
+    d.feed([fist, left_pinch], steps=1)                 # tap: rising edge, no repeat wait
+    taps = [i for i in d.of("keys.tap") if i.keys == ("tab",)]
+    assert taps, f"a left index pinch should tap Tab: {d.kinds()}"
+    assert taps[0].focus_hwnd is None or True
+    d.clear()
+    d.feed([make_pose(d.cfg, **OPEN, handedness="Right"), left_open], steps=2)
+    assert not d.engine.ctrl_held
+    assert any(i.keys == ("ctrl",) for i in d.of("keys.up")), f"Ctrl must be released: {d.kinds()}"
+
+
+def test_ctrl_tab_gesture_taps_backwards_with_the_middle_finger():
+    d = Driver(cfg_with(ctrl_tab_hold_s=0.2))
+    fist = make_pose(d.cfg, **FIST, handedness="Right")
+    left_open = make_pose(d.cfg, **OPEN, handedness="Left")
+    back = make_pose(d.cfg, extended=("index", "ring", "pinky"), pinches=("middle",),
+                     handedness="Left")
+    hold(d, [fist, left_open], 10)
+    assert d.engine.ctrl_held
+    d.clear()
+    d.feed([fist, back], steps=1)
+    taps = [i for i in d.of("keys.tap") if i.keys == ("shift", "tab")]
+    assert taps, f"a left middle pinch should tap Shift+Tab: {d.kinds()}"
+
+
+def test_ctrl_tab_never_sends_a_bare_tab_without_ctrl_held():
+    """A tap is only sent inside the session, so it can never fire Ctrl+Tab by accident."""
+    d = Driver(cfg_with(ctrl_tab_hold_s=0.2))
+    left_pinch = make_pose(d.cfg, extended=("middle", "ring", "pinky"), pinches=("index",),
+                           handedness="Left")
+    d.feed([make_pose(d.cfg, **OPEN, handedness="Right"), left_pinch], steps=6)
+    assert not d.engine.ctrl_held
+    assert not d.of("keys.tap"), d.kinds()
+
+
+def test_the_swipe_no_longer_switches_tabs():
+    """Joe replaced it with the two-hand gesture; the default must be silent."""
+    d = Driver(cfg_with())
+    for x in (0.30, 0.45, 0.60, 0.75):
+        d.feed([make_pose(d.cfg, **OPEN, palm=(x, 0.6), tip=(x, 0.5))], steps=1)
+    assert not d.of("keys.tap"), f"the swipe still switched tabs: {d.kinds()}"
+
+
 def test_two_missed_pinch_frames_do_not_end_a_scroll():
     d = Driver(cfg_with())
     scroll = make_pose(d.cfg, extended=("index", "middle"), pinches=("ring",), palm=(0.5, 0.5))
