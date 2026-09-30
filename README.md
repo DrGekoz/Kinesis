@@ -13,10 +13,10 @@ Control Windows with your hands through one webcam. Look at a window and it beco
 <img src="https://img.shields.io/badge/platform-Windows-06b6d4?style=for-the-badge" alt="Platform">
 <img src="https://img.shields.io/badge/python-3.11-8b5cf6?style=for-the-badge" alt="Python">
 <img src="https://img.shields.io/badge/latency-~46ms-f43f5e?style=for-the-badge" alt="Latency">
-<img src="https://img.shields.io/badge/tests-176%20passing-22c55e?style=for-the-badge" alt="Tests">
+<img src="https://img.shields.io/badge/tests-212%20passing-22c55e?style=for-the-badge" alt="Tests">
 <img src="https://img.shields.io/badge/virtual%20camera-OBS-8b5cf6?style=for-the-badge" alt="Virtual camera">
 
-[Gestures](#gestures) · [Quick start](#quick-start) · [Install](#install) · [Calibration](#calibration) · [Gaze](#gaze) · [Overlay](#overlay) · [Dictation](#dictation) · [Config](#config) · [Troubleshooting](#troubleshooting) · [Credits](#credits)
+[Gestures](#gestures) · [Quick start](#quick-start) · [Install](#install) · [Which screens](#which-screens) · [Calibration](#calibration) · [Gaze](#gaze) · [Overlay](#overlay) · [Dictation](#dictation) · [Config](#config) · [Troubleshooting](#troubleshooting) · [Credits](#credits)
 
 </div>
 
@@ -86,27 +86,75 @@ Windows 10/11, Python 3.11, a webcam, and OBS Studio for the virtual camera.
 ```bat
 git clone https://github.com/DrGekoz/Kinesis.git
 cd Kinesis
-git clone https://github.com/ck-zhang/eyetrax vendor/eyetrax
 
 python -m venv .venv
 .venv\Scripts\pip install mediapipe==0.10.20 opencv-contrib-python==4.10.0.84 numpy==1.26.4
-.venv\Scripts\pip install --no-deps -e vendor/eyetrax
 .venv\Scripts\pip install scikit-learn screeninfo pyvirtualcam comtypes Pillow
 ```
+
+That is the whole list: **EyeTrax is vendored into `vendor/eyetrax` and nothing needs installing for
+it.** Kinesis puts its source on the import path at startup, so a fresh clone tracks gaze with no
+editable install, no second clone step and no version to pin. An already-installed copy still works
+and wins if present - it is the same code. See `vendor/README.md` for the upstream revision.
 
 `comtypes` drives UI Automation, which is what recognises a text box before the dictation gesture
 clicks into it. Without it that check degrades to window classes and browsers stop being recognised.
 
+## Which screens
+
+On first run Kinesis lists your monitors and asks which ones to use:
+
+```
+ WHICH SCREENS SHOULD KINESIS USE?
+  [1] 1920x1080  at -3840,0  Digital TV
+  [2] 1920x1080  at -1920,0  Lenovo L27i-30
+  [3] 1920x1080  at 0,0  primary  KAMN27F18WA
+  [4] 1920x1080  at 1920,0  Lenovo L27i-30
+
+ Use which screens? [1,3 / all / primary] (all):
+```
+
+The answer applies to **everything**: calibration only puts dots on those screens, and hand aiming,
+gaze targeting, the overlays and the virtual camera all treat them as the whole desktop. A four
+screen desk is not four usable screens - the outer ones sit at extreme angles from wherever anyone
+actually sits, and gaze there is guesswork, so leaving them out makes the rest more reliable.
+
+```bat
+run.bat --ask-monitors              ask again
+run.bat --enable-monitors 2,3       pick by number
+run.bat --all-monitors              use every screen again
+```
+
+The choice is stored by device name, not position, so it survives a reboot or a dock change. A
+screen that is unplugged later is simply ignored rather than breaking the selection.
+
 ## Calibration
 
-Two one-off steps, both about 40 seconds:
+Two one-off steps:
 
 - `calibrate.bat` — **aiming.** Point at each screen, hold, Enter. Lets hand angle pick the monitor.
-- `calibrate_gaze.bat` — **gaze.** Look at dots placed on every screen. Prints pixel error, overall
-  monitor hit rate and per-screen hit rates; under ~85% means your head moved, so run it again. It
-  also measures and records how far away you were sitting.
+- `calibrate_gaze.bat` — **gaze.** Look at five dots per screen, ~40 s. This is the one that decides
+  whether eye tracking works at all, so it is worth the minute.
 
-Skip them and everything still works — gaze falls back to hand aim, then the focused window.
+The gaze wizard scores itself honestly. It refits the model leaving out **each dot in turn**, so the
+figure it prints is accuracy on a position the model has never seen - the only number that predicts
+how it behaves on the screen. It also sweeps the model's regularisation strength and keeps whichever
+targets the most dots, drops samples taken while you were leaning in or out (a different seat is a
+different geometry), and saves every sample plus the desk geometry each dot came from.
+
+```bat
+calibrate_gaze.bat                    full sweep, 5 dots per screen
+calibrate_gaze.bat --quick            one dot per screen, ~15 s, to test the plumbing
+calibrate_gaze.bat --dry-run          score it and report without saving
+calibrate_gaze.bat --points 9         9 dots per screen for a hard desk
+calibrate_gaze.bat --monitors 2,3     calibrate only those screens
+```
+
+Under ~85% on the held-out figure means your head moved; run it again. Skip all of this and
+everything still works — gaze falls back to hand aim, then the focused window.
+
+Not sure whether eye tracking is working at all? `tools\check_gaze.py` tests each stage in turn -
+vendored source, camera, face, landmarks, features, model, prediction - and says which one is broken.
 
 ## Gaze
 
@@ -209,6 +257,7 @@ Everything lives in `kinesis_config.json` and every key can be overridden live w
 | `gaze_click_tabs` / `gaze_click_warp_delay_ms` | true / 1.0 | Clicking a tab you are looking at, and the pause after the pointer moves |
 | `tab_strip_top_px` / `tab_strip_height_px` | 6 / 40 | Where the tab strip is, in logical pixels from the client top |
 | `gaze_scroll_mode` / `gaze_scroll_speed` | edge / 480 | Gaze scrolling on/off and speed |
+| `enabled_monitors` / `monitors_configured` | [] / false | Which screens Kinesis uses, by device name (empty = all). Set by the first-run question; `--enable-monitors 2,3` to change it |
 | `camera_name` / `camera_fov_deg` | auto / 0 | Override the camera, or its diagonal field of view |
 | `bezel_mm` / `assumed_distance_mm` | 10 / 700 | Physical gap between screens; seat distance before calibration |
 | `eye_corner_mm` / `ipd_mm` | 90 / 63 | Your own eye span, for the distance estimate |
@@ -237,10 +286,11 @@ Everything lives in `kinesis_config.json` and every key can be overridden live w
 ## Verification
 
 ```bat
-.venv\Scripts\python -m pytest tests -q       176 passed
+.venv\Scripts\python -m pytest tests -q       212 passed
 .venv\Scripts\python tools\verify_actions.py  16/16 live OS checks
 .venv\Scripts\python tools\verify_overlay.py  12/12 against the real compositor
 .venv\Scripts\python tools\check_tabs.py      tab-strip detection against your open browsers
+.venv\Scripts\python -u tools/check_gaze.py   live gaze pipeline: camera, face, features, model
 .venv\Scripts\python tools\bench_overlay.py   per-style overlay cost
 .venv\Scripts\python tools\check_focus.py     text-box detection against your live desktop
 check.bat                                     all of the above, in order
@@ -256,7 +306,7 @@ than recorded, so each classification is checked against a known-correct input.
 | Project | Why it is here |
 | --- | --- |
 | [Virtual-Mouse](https://github.com/whitehatboy005/Virtual-Mouse) | The starting point. Its measured failures defined the problem |
-| [EyeTrax](https://github.com/ck-zhang/eyetrax) | Gaze estimation, smoothing filters, and the chroma-key overlay idea |
+| [EyeTrax](https://github.com/ck-zhang/eyetrax) | Gaze estimation, smoothing filters and the chroma-key overlay idea. **Vendored** into `vendor/eyetrax` (MIT) so users install nothing - revision recorded in `vendor/README.md` |
 | [awesome-hand-pose-estimation](https://github.com/xinghaochen/awesome-hand-pose-estimation) | The research index, and the held-open upgrade path |
 | [Handy](https://github.com/cjpais/Handy) | Offline speech-to-text, driven by the thumb-and-pinky gesture |
 | [MediaPipe](https://github.com/google-ai-edge/mediapipe) | Hand and face landmarks — the biggest single piece |

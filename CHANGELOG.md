@@ -5,6 +5,65 @@ All notable changes to Kinesis. The README stays compact on purpose: this is whe
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are
 [semantic](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.0] — eye tracking that actually works, and EyeTrax moves in
+
+### Fixed
+
+- **Gaze never worked, and the calibration was lying about it.** The wizard scored itself on the same
+  dots it trained on, so a model that had memorised five dots reported "100% monitor hit rate, 28 px"
+  while real gaze was unusable. Measured properly on held-out dots, that same model was **1543 px out
+  and targeted 60% of dots**. Calibration now refits leaving out each dot in turn and reports that
+  number as the headline - the only figure that predicts behaviour on a position it has never seen.
+- **The model was chosen by a default nobody measured.** EyeTrax defaults to ridge `alpha=1.0` over
+  486 features. The wizard now sweeps seven regularisation strengths on held-out dots and keeps the
+  one that targets the most dots. On this desk that moved targeting from 60% to 100% at five dots,
+  and 63% to 74% across a full four-screen sweep.
+- **Ranking optimises targeting, not precision.** `alpha=1` had the best median error (712 px) and the
+  worst targeting (60%); `alpha>=100` was 65 px less precise and got every dot right. Gaze picks the
+  window you are looking at, so targeting is the objective it is ranked on.
+- **Dots were skipped for being "blinks".** The landmarker was never fed during the settle phase, so
+  EyeTrax's rolling eye-aspect history was cold when sampling began and called most frames blinks -
+  eleven of twenty dots yielded nothing and two monitors scored 0%. Settle now warms the landmarker,
+  and a dot that yields almost nothing is sampled again instead of being abandoned.
+- **The distance gate was tighter than the ruler.** A fixed 8% band on the eye-span distance threw
+  away 29% of a real calibration's samples, because 8% of 600 mm is about the measurement's own noise.
+  The band is now the wider of the tolerance and three median deviations.
+- Kinesis no longer requires `pip install -e vendor/eyetrax`; the vendored source goes on the import
+  path at startup, and the app starts with EyeTrax uninstalled entirely.
+
+### Added
+
+- **Which screens to use, asked on first run.** Kinesis lists the monitors by position, resolution and
+  EDID model name and asks which to enable; calibration then only puts dots on those, and aim, gaze,
+  overlays and the canvas mapping all treat them as the whole desktop. Stored by device name so it
+  survives reboots and docks. `--ask-monitors`, `--enable-monitors 2,3`, `--all-monitors`.
+- **EyeTrax vendored into `vendor/eyetrax`** at upstream `84e13a1` (0.4.0, MIT), tracked in the
+  repository with its licence, the revision recorded in `vendor/README.md`.
+- **`tools/check_gaze.py`** - a live stage-by-stage probe (vendored source, camera, face, landmarks,
+  features, model, prediction) that names the stage that is broken instead of saying "gaze off".
+- **Calibration saves everything**: every sample as `gaze_model.npz` (features, targets, dot ids,
+  monitors, seat distance, eye span, and the desk azimuth of each dot) plus the model choice, its
+  held-out score, the whole model sweep and the gating outcome in `gaze_model.json`.
+- **Kinesis offers to calibrate on startup** rather than printing a filename and continuing: quick or
+  full, run from inside the app, gaze live immediately afterwards.
+- `calibrate_gaze.bat --quick`, `--dry-run`, `--points 9`, `--retries`, `--distance-tolerance`, and a
+  default of five dots per screen.
+
+### Known and measured
+
+- On a four-screen array 276 cm wide from a ~60 cm seat, the two outer screens score 0% while the two
+  inner ones score 100%: the outer ones sit at an angle where appearance-based gaze has nothing to
+  work with. Excluding them (above) is the fix, not more calibration.
+
+## [1.8.1] — the console banner tells the truth again
+
+### Fixed
+
+- The gesture table printed at startup was still advertising the ring-pinch scroll, the pinky-pinch
+  drag and the open-hand tab swipe — three bindings replaced in earlier releases. It is hand-written
+  text in `app.py` that nobody re-read, so it drifted for three versions. Rewritten for the current
+  thirteen gestures, with a test that fails if a replaced binding reappears in it.
+
 ## [1.8.0] — two-hand pinch zoom
 
 Both hands pinch index+thumb at once, then move apart to zoom in and together to zoom out.

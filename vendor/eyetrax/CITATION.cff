@@ -1,0 +1,14 @@
+cff-version: 1.2.0
+message: "If you use EyeTrax in your research, please cite it as below."
+authors:
+  - family-names: Zhang
+    given-names: Chenkai
+    orcid: "https://orcid.org/0009-0000-8680-9940"
+title: "EyeTrax"
+version: "0.2.2"
+date-released: 2025-04-23
+repository-code: "https://github.com/ck-zhang/EyeTrax"
+url: "https://pypi.org/project/eyetrax/"
+keywords:
+  - eye tracking
+  - computer vision

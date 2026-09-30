@@ -2,13 +2,17 @@
 from __future__ import annotations
 
 import signal
+import subprocess
+import sys
 import time
+from pathlib import Path
 from typing import Optional
 
 import cv2
 
 from . import winapi as w
 from . import tabs
+from . import monitor_set
 from . import focus_target
 from .actions import ActionRunner
 from .aim import AimClassifier
@@ -48,11 +52,69 @@ GESTURE_HELP = """
 """
 
 
+def _maybe_calibrate(cfg, gaze) -> bool:
+    """Offer to run the gaze calibration wizard from inside the app.
+
+    Printing "run calibrate_gaze.bat" was never enough. To someone who does not know what that file
+    is, an uncalibrated app is simply an app whose eye tracking does not work, and it stays that way -
+    so ask, and run it here.
+    """
+    try:
+        if not sys.stdin or not sys.stdin.isatty():
+            return False
+    except Exception:
+        return False
+    try:
+        answer = input(" Calibrate now?  [F]ull sweep / [Q]uick / [N]ot now: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return False
+    if not answer or answer.startswith("n"):
+        return False
+    quick = answer.startswith("q")
+    script = Path(__file__).resolve().parent.parent / "calibrate_gaze.py"
+    if not script.is_file():
+        print(f"[gaze] cannot find {script}")
+        return False
+    print(f"[gaze] starting the {'quick' if quick else 'full'} calibration - sit normally and look "
+          f"at each dot without moving your head")
+    try:
+        rc = subprocess.call([sys.executable, "-u", str(script)] + (["--quick"] if quick else []))
+    except Exception as exc:
+        print(f"[gaze] could not run the wizard: {exc}")
+        return False
+    if rc != 0 or not gaze.model_path.exists():
+        print("[gaze] no model came out of that - continuing without gaze")
+        return False
+    print("[gaze] model saved - gaze is live")
+    return True
+
+
 class KinesisApp:
     def __init__(self, cfg: Config, calibration: Optional[Calibration] = None,
                  dry: Optional[bool] = None, preview: Optional[bool] = None):
         self.cfg = cfg
-        self.monitors = w.enumerate_monitors()
+        # Which screens to use. Asked once, on first run; everything downstream - aim, gaze, the
+        # canvas mapping, the overlays, calibration - narrows to this set.
+        all_monitors = w.enumerate_monitors()
+        if not cfg["monitors_configured"] and sys.stdin and sys.stdin.isatty() and not cfg["dry_run"]:
+            labels = {}
+            try:                       # name the screens by model, not by DISPLAY16
+                from .geometry import monitor_hardware
+                labels = monitor_set.labels_from_hardware(monitor_hardware(all_monitors),
+                                                          all_monitors)
+            except Exception:
+                labels = {}
+            chosen = monitor_set.ask(all_monitors, labels=labels)
+            if chosen is not None:
+                cfg["enabled_monitors"] = chosen
+                cfg["monitors_configured"] = True
+                cfg.save()
+        kept, disabled = monitor_set.select_monitors(all_monitors, cfg["enabled_monitors"])
+        self.virtual_rect = monitor_set.union_rect(kept)
+        w.set_virtual_screen_override(self.virtual_rect if disabled else None)
+        self.monitors = kept
+        self.disabled_monitors = disabled
         self.calibration = calibration if calibration is not None else load_calibration()
         self.aim = AimClassifier(cfg, self.monitors, self.calibration)
         self.engine = TrackingEngine(cfg)
@@ -96,6 +158,11 @@ class KinesisApp:
         print(f"monitors ({len(self.monitors)}):")
         for i, m in enumerate(self.monitors):
             print(f"  {i + 1}. {m}")
+        if self.disabled_monitors:
+            names = ", ".join(str(getattr(m, "device", "?")).split("\\")[-1]
+                              for m in self.disabled_monitors)
+            print(f"  left out of tracking: {names}")
+            print("  change with: run.bat --enable-monitors 1,2   (or --all-monitors)")
         print(f"virtual desktop: {w.virtual_screen()}")
         if self.calibration.targets:
             print("aim calibration:")
@@ -279,15 +346,33 @@ class KinesisApp:
         if focus_target.prewarm():
             print("[focus] UI Automation ready (dictation clicks into the field you are looking at)")
         if self.gaze.enabled and not self.gaze.is_calibrated:
-            print("[gaze] NOT CALIBRATED - eye tracking cannot pick the target window yet.")
-            print("[gaze] run calibrate_gaze.bat once (~40 seconds of looking at dots), then start "
-                  "Kinesis again.")
-            if str(self.cfg["gaze_scroll_mode"]).lower() != "off" \
-                    and str(self.cfg["pinch_ring_action"]).lower() != "scroll":
-                print("[scroll] gaze scrolling is the only scroll binding, and it cannot work "
-                      "without a model - so you have NO scrolling until you calibrate.")
-                print("[scroll] either run calibrate_gaze.bat, or keep the pinch scroll as a "
-                      "fallback: run.bat --tune pinch_ring_action=scroll --save-config")
+            # A user cannot act on "run calibrate_gaze.bat" printed into a scrolling console - this
+            # is the step that leaves eye tracking dead for good, so offer to do it right here.
+            print()
+            print("=" * 78)
+            print(" EYE TRACKING IS NOT CALIBRATED YET")
+            print("=" * 78)
+            print(" The camera, face detection and features all work - Kinesis checked them.")
+            print(" What is missing is one training pass: gaze cannot come from geometry alone,")
+            print(" it has to be fitted to YOUR eyes and YOUR seat position.")
+            print()
+            print("    quick   ~15 s, one dot per monitor  - enough to pick a monitor, coarse")
+            print("    full    ~40 s, a grid per monitor   - precise, and what you want")
+            print()
+            if _maybe_calibrate(self.cfg, self.gaze):
+                self.gaze.start()
+            else:
+                print(" continuing without gaze. Run calibrate_gaze.bat whenever you are ready:")
+                print("   calibrate_gaze.bat            full sweep")
+                print("   calibrate_gaze.bat --quick    the 15 second version")
+                if str(self.cfg["gaze_scroll_mode"]).lower() != "off" \
+                        and str(self.cfg["pinch_ring_action"]).lower() != "scroll":
+                    print("[scroll] gaze scrolling is the only scroll binding and it needs a model, "
+                          "so you have NO scrolling until you calibrate.")
+                    print("[scroll] or keep a pinch fallback: "
+                          "run.bat --tune pinch_ring_action=scroll --save-config")
+            print("=" * 78)
+            print()
         if self.desktop_overlay.enabled:
             if self.desktop_overlay.start():
                 print(f"[overlay] drawing on the desktop: {self.desktop_overlay.style}/"

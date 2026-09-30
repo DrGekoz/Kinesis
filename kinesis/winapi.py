@@ -428,7 +428,26 @@ def enumerate_monitors(by_position: bool = True) -> List[Monitor]:
     return list(found)
 
 
+_VIRTUAL_OVERRIDE: Optional[tuple] = None
+
+
+def set_virtual_screen_override(rect: Optional[tuple]) -> None:
+    """Define "the desktop" as a subset of the real virtual screen.
+
+    Every consumer - the aim classifier, gaze calibration, the canvas mapping, the overlays - asks
+    for the virtual screen rather than enumerating monitors, so narrowing it here is what makes the
+    monitor selection apply everywhere at once, instead of in the few places that were remembered.
+    Pass None to go back to the whole desktop.
+    """
+    global _VIRTUAL_OVERRIDE
+    if rect is not None and (int(rect[2]) <= 0 or int(rect[3]) <= 0):
+        rect = None
+    _VIRTUAL_OVERRIDE = tuple(int(v) for v in rect) if rect is not None else None
+
+
 def virtual_screen() -> tuple:
+    if _VIRTUAL_OVERRIDE is not None:
+        return _VIRTUAL_OVERRIDE
     return (user32.GetSystemMetrics(SM_XVIRTUALSCREEN), user32.GetSystemMetrics(SM_YVIRTUALSCREEN),
             user32.GetSystemMetrics(SM_CXVIRTUALSCREEN), user32.GetSystemMetrics(SM_CYVIRTUALSCREEN))
 

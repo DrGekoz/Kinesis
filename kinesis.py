@@ -50,6 +50,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--tune", action="append", metavar="KEY=VALUE",
                    help="override any setting from kinesis_config.json (repeatable)")
     p.add_argument("--save-config", action="store_true", help="save the tuned config to disk")
+    p.add_argument("--enable-monitors", default="", metavar="LIST",
+                   help="screens to use, e.g. 2,3 (by the numbers --list-monitors prints)")
+    p.add_argument("--all-monitors", action="store_true", help="use every screen again")
+    p.add_argument("--ask-monitors", action="store_true",
+                   help="ask which screens to use, even if it has been answered before")
     p.add_argument("--list-monitors", action="store_true", help="print monitor layout and exit")
     p.add_argument("--vcam-style", default=argparse.SUPPRESS,
                    choices=["pointer", "comet", "path", "heatmap", "heatmap_comet", "none"],
@@ -376,6 +381,38 @@ def main(argv=None) -> int:
         print(f"saved kinesis_config.json ({len(changed)} non-default settings)")
         for k, v in sorted(changed.items()):
             print(f"  {k} = {v}")
+
+    if args.all_monitors or args.enable_monitors or args.ask_monitors:
+        from kinesis import monitor_set as _ms
+        from kinesis import winapi as _w
+        monitors = _w.enumerate_monitors()
+        chosen = None
+        if args.ask_monitors:
+            labels = {}
+            try:
+                from kinesis.geometry import monitor_hardware
+                labels = _ms.labels_from_hardware(monitor_hardware(monitors), monitors)
+            except Exception:
+                labels = {}
+            chosen = _ms.ask(monitors, labels=labels)
+        elif args.all_monitors:
+            chosen = [str(getattr(m, "device", "") or "") for m in monitors]
+            print("using every screen")
+        else:
+            picked = _ms.parse_selection(args.enable_monitors, len(monitors))
+            if picked is None:
+                print(f"could not read --enable-monitors {args.enable_monitors!r} - the screens are "
+                      f"numbered 1..{len(monitors)} as --list-monitors prints them")
+                return 2
+            chosen = [str(getattr(monitors[i - 1], "device", "") or "") for i in picked]
+            kept, dropped = _ms.select_monitors(monitors, chosen)
+            print(f"using {len(kept)} of {len(monitors)} screens")
+            for m in dropped:
+                print(f"  left out: {m}")
+        if chosen is not None:
+            cfg["enabled_monitors"] = chosen
+            cfg["monitors_configured"] = True
+            cfg.save()
 
     app = KinesisApp(cfg)
     app.describe_environment()

@@ -1,0 +1,49 @@
+[build-system]
+requires      = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name            = "eyetrax"
+description     = "Webcam-based eye-tracking"
+readme          = "README.md"
+license         = { file = "LICENSE" }
+authors         = [{ name = "Chenkai Zhang (ck-zhang)" }]
+requires-python = ">=3.9"
+dynamic         = ["version"]
+dependencies    = [
+  "opencv-python>=4.5",
+  "mediapipe>=0.10",
+  "numpy>=1.22,<2",
+  "scikit-learn>=1.3",
+  "scipy>=1.10",
+  "screeninfo>=0.8",
+  "pyvirtualcam>=0.10",
+]
+
+classifiers = [
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Operating System :: OS Independent",
+]
+
+[project.urls]
+homepage = "https://github.com/ck-zhang/eyetrax"
+
+[project.scripts]
+eyetrax-demo        = "eyetrax.app.demo:run_demo"
+eyetrax-virtualcam  = "eyetrax.app.virtualcam:run_virtualcam"
+eyetrax-build-model = "eyetrax.app.build_model:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/eyetrax"]
+
+[tool.hatch.build]
+include = [
+  "src/eyetrax/**",
+  "LICENSE",
+  "README.md"
+]
+
+[tool.hatch.version]
+path = "src/eyetrax/_version.py"

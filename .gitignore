@@ -11,8 +11,13 @@ kinesis_calibration.json
 gaze_model.pkl
 *.pkl
 
-# vendored upstream clones - restore with the commands in README.md
-vendor/
+# vendored upstream clones - the research ones are restored with the commands in README.md.
+# eyetrax is a real runtime dependency, so its source is COMMITTED (see vendor/README.md).
+vendor/*
+!vendor/eyetrax/
+!vendor/README.md
 
 # scratch
 *.log
+*.npz
+gaze_model.*

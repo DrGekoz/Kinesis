@@ -113,6 +113,9 @@ DEFAULTS: Dict[str, Any] = {
     "camera_fov_deg": 0.0,             # 0 = from the table, else your own diagonal FoV
     "bezel_mm": 10.0,                  # physical gap between active areas (Windows hides bezels)
     "monitor_mm_overrides": [],        # [[width_mm, height_mm], ...] per monitor, left to right
+    # Which screens Kinesis may use, by device name. Empty = every screen. Set on first run.
+    "enabled_monitors": [],
+    "monitors_configured": False,
     "scale_reference": "eye_corners",  # eye_corners | ipd - the physical span used for distance
     "eye_corner_mm": 90.0,             # outer eye corner span; measure yours for better distance
     "ipd_mm": 63.0,
