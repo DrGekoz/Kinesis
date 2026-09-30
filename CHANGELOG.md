@@ -5,6 +5,31 @@ All notable changes to Kinesis. The README stays compact on purpose: this is whe
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are
 [semantic](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.0] — the settings window
+
+### Added
+
+- **A settings window, F2 while running** (or `run.bat --settings`). It lists every screen with the
+  EDID model name, resolution and desktop position, a switch to include or exclude each one, and a
+  live count of what is being tracked. Drawn in the same palette, fonts and rounded shapes as the
+  on-screen overlay, so it reads as part of Kinesis rather than a Tk dialog.
+- **Recalibrate buttons** for gaze and for hand aiming. Both run their wizard over the **enabled
+  screens only**, so a screen switched off is never asked for and never gets a calibration dot.
+- **Save and apply takes effect immediately**: the screen list, the desktop region, hand aiming, gaze
+  targeting, the overlays and the desk geometry are all re-derived without a restart.
+- `calibrate.py --monitors 2,3`, matching the gaze wizard, and both wizards now default to the
+  enabled screens instead of all of them.
+- `settings_hotkey` (default `f2`, `none` to disable) and `tools/check_settings_window.py`, which
+  renders the real window and closes it again so the GUI can be verified without a human.
+
+### Notes
+
+- The case this is for: a TV whose EDID geometry does not match where it physically is. Gaze and
+  aiming both degrade on a screen Windows has placed wrongly, so excluding it improves the screens
+  that are actually in front of you.
+- While the window is open Kinesis releases its keys and stops feeding gestures, so a pinch cannot
+  press the window's own buttons and no modifier is left held.
+
 ## [1.9.0] — eye tracking that actually works, and EyeTrax moves in
 
 ### Fixed

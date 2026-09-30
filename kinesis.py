@@ -55,6 +55,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--all-monitors", action="store_true", help="use every screen again")
     p.add_argument("--ask-monitors", action="store_true",
                    help="ask which screens to use, even if it has been answered before")
+    p.add_argument("--settings", action="store_true",
+                   help="open the settings window at startup (same as pressing F2)")
     p.add_argument("--list-monitors", action="store_true", help="print monitor layout and exit")
     p.add_argument("--vcam-style", default=argparse.SUPPRESS,
                    choices=["pointer", "comet", "path", "heatmap", "heatmap_comet", "none"],
@@ -374,6 +376,9 @@ def main(argv=None) -> int:
 
     if args.vcam_demo:
         return cmd_vcam_demo(cfg, args.vcam_demo_seconds)
+
+    if args.settings:
+        cfg["open_settings"] = True
 
     if args.save_config:
         cfg.save()

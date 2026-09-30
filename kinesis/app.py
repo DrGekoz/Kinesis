@@ -98,14 +98,7 @@ class KinesisApp:
         # canvas mapping, the overlays, calibration - narrows to this set.
         all_monitors = w.enumerate_monitors()
         if not cfg["monitors_configured"] and sys.stdin and sys.stdin.isatty() and not cfg["dry_run"]:
-            labels = {}
-            try:                       # name the screens by model, not by DISPLAY16
-                from .geometry import monitor_hardware
-                labels = monitor_set.labels_from_hardware(monitor_hardware(all_monitors),
-                                                          all_monitors)
-            except Exception:
-                labels = {}
-            chosen = monitor_set.ask(all_monitors, labels=labels)
+            chosen = monitor_set.ask(all_monitors, labels=self._monitor_labels(all_monitors))
             if chosen is not None:
                 cfg["enabled_monitors"] = chosen
                 cfg["monitors_configured"] = True
@@ -130,6 +123,10 @@ class KinesisApp:
         self._gaze_dwell_since = 0.0
         self._gaze_focus_at = 0.0
         self.last_ptt_focus = ""
+        # settings window: F2 by default, disabled with settings_hotkey = "none"
+        self._settings_hotkey = self._hotkey_vk(str(cfg.get("settings_hotkey", "f2") or ""))
+        self._settings_armed = True
+        self._open_settings_at_start = bool(cfg.get("open_settings", False))
         self.hud = Hud(cfg, self.monitors)
         self.preview = bool(cfg["preview"] if preview is None else preview)
         self._stop = False
@@ -384,6 +381,10 @@ class KinesisApp:
         self.vcam.start(cam_fps)
         time.sleep(0.3)                       # let the threads fill their slots
         try:
+            if self._open_settings_at_start:
+                self._open_settings_at_start = False
+                print("[settings] opening the settings window (--settings)")
+                self._open_settings()
             while not self._stop:
                 now = time.perf_counter()
                 poses, frame, latency = self.engine.update()
@@ -446,6 +447,13 @@ class KinesisApp:
                 if bool(self.cfg["latency_report"]) and now - self._last_report > 5.0:
                     self._last_report = now
                     self._print_latency()
+                if self._settings_hotkey and self._settings_armed and \
+                        w.key_pressed(self._settings_hotkey):
+                    self._open_settings()
+                    self._prev = 0.0                       # a fresh dt after the window has been up
+                    continue
+                if self._settings_hotkey and not w.key_pressed(self._settings_hotkey):
+                    self._settings_armed = True            # re-arm only once the key is released
                 if w.panic_pressed():
                     print("END pressed - stopping")
                     break
@@ -471,6 +479,108 @@ class KinesisApp:
                  if self.gaze.enabled or self.vcam.enabled else "")
               + (f" | {self.desktop_overlay.status_line()}"
                 if self.desktop_overlay.enabled else ""))
+
+    @staticmethod
+    def _hotkey_vk(name: str) -> int:
+        """Virtual-key code for a named hotkey; 0 means the hotkey is off."""
+        key = (name or "").strip().lower()
+        if not key or key in ("none", "off", "0", "disabled"):
+            return 0
+        try:
+            return int(w.vk_for(key))
+        except Exception:
+            print(f"[settings] unknown settings hotkey {name!r} - use run.bat --settings instead")
+            return 0
+
+    @staticmethod
+    def _monitor_labels(monitors) -> dict:
+        """EDID model names, so screens are named rather than numbered DISPLAY14 etc."""
+        try:
+            from .geometry import monitor_hardware
+            return monitor_set.labels_from_hardware(monitor_hardware(monitors), monitors)
+        except Exception:
+            return {}
+
+    def _open_settings(self) -> None:
+        """Pause input, show the settings window, apply whatever came back.
+
+        Input is released and the gesture pipeline is skipped while the window is up, so a pinch
+        cannot press buttons in it and no modifier is left held.
+        """
+        from . import settings_window
+        self._settings_armed = False
+        try:
+            self.runner.execute(self.gestures.release_all(reason="settings"))
+        except Exception:
+            pass
+        action = None
+        try:
+            monitors = w.enumerate_monitors()
+            action = settings_window.run(self.cfg, monitors,
+                                         theme=self.cfg.get("vcam_theme", "ember"),
+                                         labels=self._monitor_labels(monitors))
+        except Exception as exc:                       # pragma: no cover - GUI failure
+            print(f"[settings] window failed: {exc}")
+        if action == "saved":
+            self.apply_monitor_selection()
+        elif action == "gaze":
+            self.recalibrate("gaze")
+        elif action == "aim":
+            self.recalibrate("aim")
+
+    def apply_monitor_selection(self) -> None:
+        """Re-read the enabled screens and make every part of the app follow them."""
+        all_monitors = w.enumerate_monitors()
+        kept, disabled = monitor_set.select_monitors(all_monitors, self.cfg["enabled_monitors"])
+        self.monitors = kept
+        self.disabled_monitors = disabled
+        self.virtual_rect = monitor_set.union_rect(kept)
+        w.set_virtual_screen_override(self.virtual_rect if disabled else None)
+        for holder in (self.aim, self.runner, self.desktop_overlay, self.hud):
+            if hasattr(holder, "monitors"):            # they all keep their own copy
+                holder.monitors = list(kept)
+        if self.geometry is not None:
+            fw, fh = self.engine.frame_size
+            self._build_geometry(fw, fh)               # desk maths follows the screens too
+        names = ", ".join(str(getattr(m, "device", "") or "").split("\\")[-1] for m in kept)
+        print(f"[screens] tracking {len(kept)} of {len(all_monitors)}: {names}")
+        if disabled:
+            out = ", ".join(str(getattr(m, "device", "") or "").split("\\")[-1] for m in disabled)
+            print(f"[screens] left out: {out}")
+        if not self.gaze.is_calibrated:
+            print("[screens] gaze has no model yet - use Recalibrate in the settings window, or "
+                  "calibrate_gaze.bat")
+
+    def recalibrate(self, kind: str) -> None:
+        """Run a calibration wizard over the enabled screens only, then reload what it produced."""
+        from . import settings_window
+        root = Path(__file__).resolve().parent.parent
+        script = root / ("calibrate_gaze.py" if kind == "gaze" else "calibrate.py")
+        if not script.is_file():
+            print(f"[recalibrate] cannot find {script}")
+            return
+        arg = settings_window.calibration_arg(w.enumerate_monitors(), self.cfg["enabled_monitors"])
+        cmd = [sys.executable, "-u", str(script)] + (["--monitors", arg] if arg else [])
+        print(f"[recalibrate] {kind}: {' '.join(cmd)}")
+        try:
+            rc = subprocess.call(cmd)
+        except Exception as exc:
+            print(f"[recalibrate] could not run it: {exc}")
+            return
+        if rc != 0:
+            print(f"[recalibrate] {kind} calibration exited with {rc} - nothing changed")
+            return
+        if kind == "gaze":
+            self.gaze.stop()
+            if self.gaze.is_calibrated:
+                self.gaze.start()
+                self._build_geometry(*self.engine.frame_size)
+            print(f"[recalibrate] gaze {'live' if self.gaze._estimator else 'not started'}")
+        else:
+            self.calibration = load_calibration()
+            self.aim = AimClassifier(self.cfg, self.monitors, self.calibration)
+            print(f"[recalibrate] aiming updated "
+                  f"({len(self.calibration.targets)} screens calibrated)")
 
     def shutdown(self):
         self.gaze_scroller.release()

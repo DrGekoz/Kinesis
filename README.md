@@ -13,10 +13,10 @@ Control Windows with your hands through one webcam. Look at a window and it beco
 <img src="https://img.shields.io/badge/platform-Windows-06b6d4?style=for-the-badge" alt="Platform">
 <img src="https://img.shields.io/badge/python-3.11-8b5cf6?style=for-the-badge" alt="Python">
 <img src="https://img.shields.io/badge/latency-~46ms-f43f5e?style=for-the-badge" alt="Latency">
-<img src="https://img.shields.io/badge/tests-212%20passing-22c55e?style=for-the-badge" alt="Tests">
+<img src="https://img.shields.io/badge/tests-235%20passing-22c55e?style=for-the-badge" alt="Tests">
 <img src="https://img.shields.io/badge/virtual%20camera-OBS-8b5cf6?style=for-the-badge" alt="Virtual camera">
 
-[Gestures](#gestures) · [Quick start](#quick-start) · [Install](#install) · [Which screens](#which-screens) · [Calibration](#calibration) · [Gaze](#gaze) · [Overlay](#overlay) · [Dictation](#dictation) · [Config](#config) · [Troubleshooting](#troubleshooting) · [Credits](#credits)
+[Gestures](#gestures) · [Quick start](#quick-start) · [Install](#install) · [Which screens](#which-screens) · [Calibration](#calibration) · [Gaze](#gaze) · [Settings](#settings) · [Overlay](#overlay) · [Dictation](#dictation) · [Config](#config) · [Troubleshooting](#troubleshooting) · [Credits](#credits)
 
 </div>
 
@@ -176,6 +176,38 @@ window, gesture, and it lands there — no click-to-focus first.
   than ~8° apart *from where you sit* are reported as too tight to tell apart reliably.
 - Fallback order: gaze → hand angle (`calibrate.bat`) → focused window.
 
+## Settings
+
+Press **F2** while Kinesis is running (or start it with `run.bat --settings`) and a settings window
+opens, drawn in the same palette and fonts as the on-screen overlay:
+
+```
+ KINESIS                                     screens and calibration
+ Hand and eye tracking only work on screens you actually face. A screen
+ Windows places somewhere else than it really is should be switched off.
+
+  Lenovo L27i-30                     1920x1080  at -1920,0        [ o]
+  KAMN27F18WA   PRIMARY              1920x1080  at 0,0            [o ]
+  Lenovo L27i-30                     1920x1080  at 1920,0         [o ]
+
+ 3 of 4 screens tracked
+
+ [ Save and apply ]  [ Recalibrate gaze ]  [ Recalibrate aiming ]        Close
+```
+
+- **Switches** turn tracking on or off per screen. What is switched off is left out of hand aiming,
+  gaze targeting, the overlays and the virtual camera, and no calibration dot is ever shown on it.
+- **Recalibrate gaze** and **Recalibrate aiming** run the wizards over the enabled screens only, so a
+  screen you switched off is never asked for.
+- **Save and apply** takes effect immediately - no restart.
+
+This is the setting for a screen Windows has placed wrongly. A TV on the wall, a screen on a
+different desk, anything whose EDID geometry does not match where it really is, will drag aiming and
+gaze off with it; switch it off and the screens that are actually in front of you get better.
+
+While the window is open Kinesis releases its keys and stops injecting, so a hand gesture cannot
+press its own buttons.
+
 ## Overlay
 
 Five looks, from one accumulation buffer (faded each frame, stamped, blurred into itself for bloom):
@@ -257,7 +289,8 @@ Everything lives in `kinesis_config.json` and every key can be overridden live w
 | `gaze_click_tabs` / `gaze_click_warp_delay_ms` | true / 1.0 | Clicking a tab you are looking at, and the pause after the pointer moves |
 | `tab_strip_top_px` / `tab_strip_height_px` | 6 / 40 | Where the tab strip is, in logical pixels from the client top |
 | `gaze_scroll_mode` / `gaze_scroll_speed` | edge / 480 | Gaze scrolling on/off and speed |
-| `enabled_monitors` / `monitors_configured` | [] / false | Which screens Kinesis uses, by device name (empty = all). Set by the first-run question; `--enable-monitors 2,3` to change it |
+| `enabled_monitors` / `monitors_configured` | [] / false | Which screens Kinesis uses, by device name (empty = all). Set by the first-run question or the settings window |
+| `settings_hotkey` | f2 | Opens the settings window while running; `none` disables it |
 | `camera_name` / `camera_fov_deg` | auto / 0 | Override the camera, or its diagonal field of view |
 | `bezel_mm` / `assumed_distance_mm` | 10 / 700 | Physical gap between screens; seat distance before calibration |
 | `eye_corner_mm` / `ipd_mm` | 90 / 63 | Your own eye span, for the distance estimate |
@@ -286,11 +319,12 @@ Everything lives in `kinesis_config.json` and every key can be overridden live w
 ## Verification
 
 ```bat
-.venv\Scripts\python -m pytest tests -q       212 passed
+.venv\Scripts\python -m pytest tests -q       235 passed
 .venv\Scripts\python tools\verify_actions.py  16/16 live OS checks
 .venv\Scripts\python tools\verify_overlay.py  12/12 against the real compositor
 .venv\Scripts\python tools\check_tabs.py      tab-strip detection against your open browsers
 .venv\Scripts\python -u tools/check_gaze.py   live gaze pipeline: camera, face, features, model
+.venv\Scripts\python -u tools/check_settings_window.py   renders the settings window
 .venv\Scripts\python tools\bench_overlay.py   per-style overlay cost
 .venv\Scripts\python tools\check_focus.py     text-box detection against your live desktop
 check.bat                                     all of the above, in order

@@ -116,6 +116,10 @@ DEFAULTS: Dict[str, Any] = {
     # Which screens Kinesis may use, by device name. Empty = every screen. Set on first run.
     "enabled_monitors": [],
     "monitors_configured": False,
+    # F2 opens the settings window while running; "none" disables it. open_settings is the
+    # --settings launch flag and is not meant to be saved.
+    "settings_hotkey": "f2",
+    "open_settings": False,
     "scale_reference": "eye_corners",  # eye_corners | ipd - the physical span used for distance
     "eye_corner_mm": 90.0,             # outer eye corner span; measure yours for better distance
     "ipd_mm": 63.0,

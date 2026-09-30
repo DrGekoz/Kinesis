@@ -77,17 +77,36 @@ def wait_for_key(engine: TrackingEngine, prompt: str) -> str:
 
 
 def main() -> int:
+    ap = argparse.ArgumentParser(description="Kinesis aim calibration")
+    ap.add_argument("--monitors", default="",
+                    help="only these screens, e.g. 2,3 (default: the ones enabled for tracking)")
+    args = ap.parse_args()
     cfg = Config.load()
     monitors = w.enumerate_monitors()
     if not monitors:
         print("no monitors detected")
         return 1
 
+    if args.monitors:
+        wanted = [int(x) - 1 for x in args.monitors.replace(" ", "").split(",") if x.strip()]
+    else:
+        # same default as the gaze wizard: never put a calibration screen on one that was switched
+        # off for tracking - a TV that is not on the desk is exactly what people disable
+        from kinesis import monitor_set as _ms
+        kept, dropped = _ms.select_monitors(monitors, cfg["enabled_monitors"])
+        wanted = [i for i, m in enumerate(monitors) if m in kept] if dropped \
+            else list(range(len(monitors)))
+    wanted = [i for i in wanted if 0 <= i < len(monitors)]
+    if not wanted:
+        print("no screens selected to calibrate")
+        return 2
+
     print("Kinesis aim calibration")
     print("=======================")
     print(f"{len(monitors)} monitors, indexed left to right:\n")
     for i, m in enumerate(monitors):
-        print(f"  {i + 1}. {m}")
+        mark = "" if i in wanted else "   (not calibrated)"
+        print(f"  {i + 1}. {m}{mark}")
     print("\nPoint if needed, then hold your hand still and press Enter for each screen.")
     print("'s' skips a screen, 'q' quits without saving.\n")
 
@@ -102,6 +121,8 @@ def main() -> int:
     quit_requested = False
     try:
         for i, monitor in enumerate(monitors):
+            if i not in wanted:
+                continue
             name = monitor.device.split("\\")[-1]
             while True:
                 action = wait_for_key(engine, f"[monitor {i + 1}] {name}: point at this screen")
