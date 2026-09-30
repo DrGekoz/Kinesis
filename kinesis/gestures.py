@@ -122,6 +122,12 @@ class GestureEngine:
         self._claw_spread_frames = 0
 
         self._claw_spread_active = False
+        # volume rocker: index + pinky held, hand moves up/down
+        self._volume_active = False
+        self._volume_y0 = 0.0
+        self._volume_smooth_y: Optional[float] = None
+        self._volume_accum = 0.0
+        self._volume_release = 0
         self._left_fist_since: Optional[float] = None
         self._t_tab = 0.0
         self._shaka_since: Optional[float] = None
@@ -257,6 +263,85 @@ class GestureEngine:
             return False
         return True
 
+    def _update_volume(self, primary: HandPose, now: float,
+                       target_hwnd: Optional[int] = None,
+                       can_start: bool = True) -> List[Intent]:
+        """Index and pinky out, everything else curled, held: move the hand up or down for volume.
+
+        Distinct from the shaka (push to talk), which also needs the THUMB out - so this is the
+        thumb-in version of the same hand shape and the two cannot be confused.
+
+        Soft, deliberately. Palm travel accumulates and is spent in whole steps, the way the
+        two-hand zoom does, so the hand sets the rate rather than a timer: a slow drift moves one
+        step per `volume_step_px` of travel, and a fast sweep is still capped at
+        `volume_max_steps` per frame so it cannot flood the key queue or jump the volume.
+
+        Up is `volume_keys_up`, down is `volume_keys_down` - these are the Windows master volume
+        keys, so they act on the system output no matter what has focus, and they do not require
+        a gaze target (unlike the window actions).
+        """
+        out: List[Intent] = []
+        if not bool(self.cfg["volume_enabled"]):
+            return out
+        pose_held = (primary.extended.get("index") and primary.extended.get("pinky")
+                     and not primary.extended.get("middle") and not primary.extended.get("ring"))
+        # release tolerance, so a single dropped landmark frame does not drop the volume mid-adjust
+        if self._volume_active:
+            if pose_held:
+                self._volume_release = 0
+            else:
+                self._volume_release += 1
+                if self._volume_release >= int(self.cfg["volume_release_frames"]):
+                    self._end_volume("volume release")
+                    return out
+        else:
+            if not pose_held or self.active is not None or not can_start:
+                if not pose_held:
+                    self._confirm("volume", False)
+                return out
+            if not self._confirm("volume", True, int(self.cfg["ring_confirm_frames"])):
+                return out
+            self._volume_active = True
+            self._volume_release = 0
+            self._volume_accum = 0.0
+            self._volume_smooth_y = None
+            self._volume_y0 = float(primary.palm_px[1])
+            self._take_lock("volume", now)
+            self.last_note = "volume: hold index+pinky"
+            return out
+
+        # low-pass the palm first, so landmark noise never becomes a step
+        raw = float(primary.palm_px[1])
+        if self._volume_smooth_y is None:
+            self._volume_smooth_y = raw
+        else:
+            a = float(self.cfg["volume_smooth"])
+            self._volume_smooth_y += (raw - self._volume_smooth_y) * a
+
+        delta = self._volume_smooth_y - self._volume_y0
+        if abs(delta) < float(self.cfg["volume_deadband_px"]):
+            return out
+        self._volume_accum += delta
+        step = max(1.0, float(self.cfg["volume_step_px"]))
+        steps = int(abs(self._volume_accum) // step)
+        if not steps:
+            return out
+        steps = min(steps, max(1, int(self.cfg["volume_max_steps"])))
+        up = delta < 0.0                       # palm y grows downward, so up is negative
+        self._volume_accum -= steps * step * (-1.0 if up else 1.0)
+        keys = tuple(self.cfg["volume_keys_up"] if up else self.cfg["volume_keys_down"])
+        for _ in range(steps):
+            out.append(Intent("keys.tap", keys=keys, note="volume up" if up else "volume down"))
+        self.last_note = f"volume {'up' if up else 'down'} x{steps}"
+        return out
+
+    def _end_volume(self, note: str = "volume end") -> None:
+        self._volume_active = False
+        self._volume_smooth_y = None
+        self._volume_accum = 0.0
+        self._volume_release = 0
+        self.last_note = note
+
     def _claw_spread(self, primary: HandPose, aim_index, target_hwnd, now: float) -> List[Intent]:
         """Did a claw end by SPREADING the fingers apart? That is the maximise gesture.
 
@@ -382,6 +467,14 @@ class GestureEngine:
         out.extend(self._update_zoom(primary, left_hand, now, target_hwnd, can_start))
         if self._zoom_active:
             # both index pinches are the zoom, so no click, no flick, and no cursor to follow
+            return out
+
+        # ---------------- volume rocker (index + pinky held, hand up/down) ----------------
+        # Before the claw: a claw has the middle and ring fingers curled too, so it must be checked
+        # first here to claim the hand, or the volume would swallow every claw.
+        out.extend(self._update_volume(primary, now, target_hwnd, can_start))
+        if self._volume_active:
+            # the hand is the volume control: no cursor, no click, no other gesture may start
             return out
 
         # ---------------- pose transitions ----------------
@@ -972,6 +1065,13 @@ class GestureEngine:
         self._claw_spread_active = False
         self._claw_y0 = 0.0
         self._claw_t0 = 0.0
+        # A live volume rocker would keep sending volume keys after hand loss, on the first frames
+        # of whatever hand appears next.
+        self._volume_active = False
+        self._volume_smooth_y = None
+        self._volume_accum = 0.0
+        self._volume_release = 0
+        self._volume_y0 = 0.0
         if reason:
             self.last_note = f"released ({reason})"
         return out

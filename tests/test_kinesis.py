@@ -597,6 +597,114 @@ def test_releasing_a_claw_back_into_a_plain_open_hand_is_not_a_spread(cfg):
     assert not [i for i in out if i.kind in ("window.minimise", "window.maximise")]
 
 
+# ============================================================ volume rocker
+VOL_POSE = dict(extended=("index", "pinky"))
+
+
+def test_index_and_pinky_held_arms_the_volume_rocker(cfg):
+    d = Driver(cfg)
+    d.feed([make_pose(cfg, **VOL_POSE, palm=(0.5, 0.5))], steps=5, target_hwnd=555)
+    assert d.engine._volume_active, f"index+pinky did not arm the volume: {d.kinds()}"
+
+
+def test_moving_up_raises_the_volume(cfg):
+    d = Driver(cfg)
+    d.feed([make_pose(cfg, **VOL_POSE, palm=(0.5, 0.70))], steps=5, target_hwnd=555)
+    d.clear()
+    for i in range(6):                       # palm rises: smaller y
+        d.feed([make_pose(cfg, **VOL_POSE, palm=(0.5, 0.70 - i * 0.08))], steps=1, target_hwnd=555)
+    ups = [i for i in d.intents if i.keys == ("volumeup",)]
+    assert ups, f"moving the hand up did not raise the volume: {d.kinds()}"
+
+
+def test_moving_down_lowers_the_volume(cfg):
+    d = Driver(cfg)
+    d.feed([make_pose(cfg, **VOL_POSE, palm=(0.5, 0.30))], steps=5, target_hwnd=555)
+    d.clear()
+    for i in range(6):
+        d.feed([make_pose(cfg, **VOL_POSE, palm=(0.5, 0.30 + i * 0.08))], steps=1, target_hwnd=555)
+    downs = [i for i in d.intents if i.keys == ("volumedown",)]
+    assert downs, f"moving the hand down did not lower the volume: {d.kinds()}"
+
+
+def test_the_volume_rocker_is_soft(cfg):
+    """Not one key per frame: travel buys steps, and a single frame is capped."""
+    cfg.set("volume_max_steps", 2)
+    d = Driver(cfg)
+    d.feed([make_pose(cfg, **VOL_POSE, palm=(0.5, 0.50))], steps=5, target_hwnd=555)
+    d.clear()
+    for i in range(3):                       # a violent flick, 100+ px in one frame
+        d.feed([make_pose(cfg, **VOL_POSE, palm=(0.5, 0.50 - 0.5))], steps=1, target_hwnd=555)
+    # group by timestamp: the cap is per frame, not per call
+    per_frame = {}
+    for t, intent in d.stamped:
+        if intent.keys and intent.keys[0].startswith("volume"):
+            per_frame[t] = per_frame.get(t, 0) + 1
+    assert per_frame, "the flick changed nothing at all"
+    assert all(n <= 2 for n in per_frame.values()), \
+        f"a flick sent {sorted(per_frame.values())} keys in one frame, cap was 2"
+    assert len(per_frame) == 3, f"expected one capped burst per frame, got {per_frame}"
+
+
+def test_a_deadband_stops_jitter_from_changing_the_volume(cfg):
+    d = Driver(cfg)
+    d.feed([make_pose(cfg, **VOL_POSE, palm=(0.5, 0.50))], steps=5, target_hwnd=555)
+    d.clear()
+    for i in range(12):                      # ~1 px of drift, well inside the deadband
+        d.feed([make_pose(cfg, **VOL_POSE, palm=(0.5, 0.50 + i * 0.0008))], steps=1, target_hwnd=555)
+    assert not [i for i in d.intents if i.keys and i.keys[0].startswith("volume")], \
+        f"landmark jitter changed the volume: {d.kinds()}"
+
+
+def test_the_shaka_is_push_to_talk_not_volume(cfg):
+    """Shaka is thumb + pinky. The rocker is index + pinky. They differ by exactly the index, so a
+    thumb-out shaka must never start the volume - they are different actions."""
+    d = Driver(cfg)
+    d.feed([make_pose(cfg, extended=("pinky",), pose_name=POSE_SHAKA, palm=(0.5, 0.5))],
+           steps=8, target_hwnd=555)
+    assert not d.engine._volume_active, "the shaka armed the volume rocker"
+    assert d.engine.ptt_held, "the shaka stopped being push-to-talk"
+
+
+def test_a_claw_is_not_the_volume_rocker(cfg):
+    d = Driver(cfg)
+    d.feed([make_pose(cfg, extended=(), pose_name="MIXED",
+                      pinches=("index", "middle", "ring", "pinky"), palm=(0.5, 0.5))],
+           steps=6, target_hwnd=555)
+    assert not d.engine._volume_active, "a claw armed the volume rocker"
+
+
+def test_a_pointing_hand_is_not_the_volume_rocker(cfg):
+    d = Driver(cfg)
+    d.feed([make_pose(cfg, extended=("index",), palm=(0.5, 0.5))], steps=8, target_hwnd=555)
+    assert not d.engine._volume_active, "a pointing hand armed the volume rocker"
+    assert not [i for i in d.intents if i.keys and i.keys[0].startswith("volume")], \
+        "a pointing hand changed the volume"
+
+
+def test_volume_needs_the_pinky_too(cfg):
+    """index alone is the point gesture - it must not drift into volume."""
+    d = Driver(cfg)
+    d.feed([make_pose(cfg, extended=("index", "middle"), palm=(0.5, 0.5))], steps=8, target_hwnd=555)
+    assert not d.engine._volume_active, "index+middle armed the volume rocker"
+
+
+def test_hand_loss_releases_the_volume_rocker(cfg):
+    d = Driver(cfg)
+    d.feed([make_pose(cfg, **VOL_POSE, palm=(0.5, 0.5))], steps=5, target_hwnd=555)
+    assert d.engine._volume_active
+    d.clear().feed([], steps=3)
+    assert not d.engine._volume_active, "a lost hand left the volume rocker live"
+
+
+def test_volume_can_be_turned_off(cfg):
+    cfg.set("volume_enabled", False)
+    d = Driver(cfg)
+    d.feed([make_pose(cfg, **VOL_POSE, palm=(0.5, 0.5))], steps=8, target_hwnd=555)
+    assert not d.engine._volume_active, "volume_enabled=false still armed the rocker"
+    assert not [i for i in d.intents if i.keys and i.keys[0].startswith("volume")]
+
+
 # ============================================================ gestures: clicks
 def test_pinch_clicks_once(cfg):
     """A pinch is committed on release (or while held past the arm time), and exactly once."""

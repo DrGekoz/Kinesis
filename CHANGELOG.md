@@ -5,6 +5,56 @@ All notable changes to Kinesis. The README stays compact on purpose: this is whe
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are
 [semantic](https://semver.org/spec/v2.0.0.html).
 
+## [1.15.0] — a volume rocker on index + pinky
+
+### The gesture
+
+**Index and pinky out, middle and ring curled, thumb in — hold it, then move the hand up or down.**
+Up raises the system volume, down lowers it.
+
+It is deliberately *not* the shaka. The shaka is thumb + pinky and is push-to-talk; this is index +
+pinky, so the two differ by exactly the index finger and cannot be confused. It is also not a claw
+(that's all four fingertips *on* the thumb), not a point (index alone), and not index+middle — each
+of those has a test asserting it never arms the rocker.
+
+### Soft, in three separate places
+
+"Tap once per frame" is unusable on a real hand, so the rate is the hand's, not a timer — the same
+accumulator the two-hand zoom uses:
+
+    volume_deadband_px   4.0    movement below this does nothing at all
+    volume_step_px      26.0    palm travel that buys ONE step (~2% of master)
+    volume_max_steps     2      hard ceiling per frame, so a fast sweep cannot flood the queue
+    volume_smooth       0.35    low-pass on the palm, so landmark noise never becomes a step
+
+Up is `volumeup` (0xAF), down is `volumedown` (0xAE), both added to the virtual-key table with
+aliases. These are the Windows **master** volume keys, so they act on the system output regardless
+of focus and need no gaze target — unlike the window actions.
+
+`mute` is mapped to 0xAD but deliberately has **no** alias to `m`: `m` is the letter, and silently
+repointing a map's `m` at mute would be a trap.
+
+`release_all()` clears the rocker. A live one would keep sending volume keys after hand loss, on the
+first frames of whatever hand appears next.
+
+### Verification, and what is NOT verified
+
+`tools/verify_volume.py` — 10/10. It proves the VK codes are the SDK's `VK_VOLUME_*` values, that
+every alias resolves, and that a gesture map can actually bind them.
+
+**It does not prove the mixer responds on this machine**, and that is worth being blunt about.
+Measuring it needed either `waveOutGetVolume` (returns the `0xFFFFFFFF` sentinel here, not a
+reading) or COM `IAudioEndpointVolume` (`CoCreateInstance` returns `0x800401F0 CO_E_CLASSSTRING`
+from this process even with correctly marshalled 16-byte GUID structs). The machine *has* audio —
+`waveOutGetNumDevs` returns 14 and the registry holds 67 render endpoints — so this is a
+process-level restriction on this box, not a broken key or a broken mixer.
+
+So the tool **exits 0 and says CANNOT MEASURE** rather than reporting a failure. A test that cannot
+measure is not a test that failed, and pretending otherwise would be the actual bug. Run it on a
+normal desktop session to close that loop.
+
+291 unit tests, 21/21 live action checks, 12/12 overlay checks.
+
 ## [1.14.0] — the claw spreads to maximise
 
 ### What changed

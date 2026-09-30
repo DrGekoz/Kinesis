@@ -76,6 +76,16 @@ VK = {
     "-": 0xBD, "minus": 0xBD, "hyphen": 0xBD, "_": 0xBD,
     "f1": 0x70, "f2": 0x71, "f3": 0x72, "f4": 0x73, "f5": 0x74, "f6": 0x75,
     "f7": 0x76, "f8": 0x77, "f9": 0x78, "f10": 0x79, "f11": 0x7A, "f12": 0x7B,
+    # The multimedia keys. These are the master volume keys, which is what a gesture wants: they
+    # adjust whatever the system considers the default output, and they are the same keys the
+    # keyboard's volume rocker sends - so no extra dependency and no per-app focus problems.
+    # The mute key deliberately has no alias mapping to "m": it is a distinct action, and aliasing
+    # it would silently turn a mute request into a mute toggle with no way back.
+    "volumeup": 0xAF, "volume_up": 0xAF, "volume-up": 0xAF, "volup": 0xAF, "vol_up": 0xAF,
+    "vol+": 0xAF,
+    "volumedown": 0xAE, "volume_down": 0xAE, "volume-down": 0xAE, "voldown": 0xAE, "vol_down": 0xAE,
+    "vol-": 0xAE,
+    "volumemute": 0xAD, "volume_mute": 0xAD, "volume-mute": 0xAD, "mute": 0xAD,
 }
 
 
@@ -737,6 +747,33 @@ def key_up(name: str) -> None:
 def key_tap(name: str) -> None:
     vk = vk_for(name)
     _send(_key_input(vk, False), _key_input(vk, True))
+
+
+def master_volume() -> Optional[int]:
+    """The master output volume as 0-65535, or None if the device cannot be read.
+
+    Read-only and used by the verification tools, so a volume gesture can be proven against the
+    real mixer rather than asserted. `waveOutGetVolume(NULL)` is the classic device-independent
+    master-volume read; a NULL device handle means "the default output".
+    """
+    try:
+        wave = ctypes.WinDLL("winmm")
+    except OSError:                                     # pragma: no cover - non-Windows
+        return None
+    value = wintypes.DWORD()
+    if wave.waveOutGetVolume(None, ctypes.byref(value)) != 0:
+        return None
+    return int(value.value)
+
+
+def set_master_volume(value: int) -> bool:
+    """Set the master output volume, 0-65535. Only the verification tools call this."""
+    try:
+        wave = ctypes.WinDLL("winmm")
+    except OSError:                                     # pragma: no cover - non-Windows
+        return False
+    clamped = max(0, min(65535, int(value)))
+    return wave.waveOutSetVolume(None, wintypes.DWORD(clamped)) == 0
 
 
 # ---------------------------------------------------------------- window control

@@ -206,9 +206,26 @@ DEFAULTS: Dict[str, Any] = {
     # rather than a drift. A hand that was mid-gesture - swiping, clicking, coming out of a
     # transition - cannot pass through a settled claw on the way somewhere else.
     "claw_spread": True,
-    "claw_spread_margin": 0.45,        # extra hand-scales past pinch_off that every tip must clear
+    "claw_spread_margin": 0.45,        # extra hand-scales past pinch_off every tip must clear
     "claw_spread_frames": 2,           # the spread must read across this many frames, not one
     "claw_settle_s": 0.18,             # hold the claw this long first, or it was never a claw
+    # System volume: index + pinky out (middle and ring curled, so it is NOT the shaka, which needs
+    # the thumb out too), held, then the hand moves up or down to raise or lower it.
+    #
+    # "Soft" is three separate things, because a naive tap-per-frame is unusable on a real machine:
+    #   volume_deadband_px   movement below this does nothing at all
+    #   volume_step_px       palm travel that buys ONE step, so the hand sets the rate
+    #   volume_max_steps     a hard ceiling per frame, so a fast sweep cannot flood the key queue
+    #   volume_smooth        low-pass on the palm, so noise does not become steps
+    # The Windows master volume is 100 steps of 2% each, so one step is ~2% - deliberately gentle.
+    "volume_enabled": True,
+    "volume_deadband_px": 4.0,
+    "volume_step_px": 26.0,
+    "volume_max_steps": 2,
+    "volume_smooth": 0.35,
+    "volume_release_frames": 3,
+    "volume_keys_up": ("volumeup",),
+    "volume_keys_down": ("volumedown",),
     "ring_confirm_frames": 2,          # ring pinch must hold this long before whatever it is bound
                                        # to starts (was scroll_confirm_frames)
     "drag_confirm_frames": 2,          # thumb-pinky drag must hold this long too (also keeps
