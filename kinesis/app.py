@@ -279,6 +279,12 @@ class KinesisApp:
             print("[gaze] NOT CALIBRATED - eye tracking cannot pick the target window yet.")
             print("[gaze] run calibrate_gaze.bat once (~40 seconds of looking at dots), then start "
                   "Kinesis again.")
+            if str(self.cfg["gaze_scroll_mode"]).lower() != "off" \
+                    and str(self.cfg["pinch_ring_action"]).lower() != "scroll":
+                print("[scroll] gaze scrolling is the only scroll binding, and it cannot work "
+                      "without a model - so you have NO scrolling until you calibrate.")
+                print("[scroll] either run calibrate_gaze.bat, or keep the pinch scroll as a "
+                      "fallback: run.bat --tune pinch_ring_action=scroll --save-config")
         if self.desktop_overlay.enabled:
             if self.desktop_overlay.start():
                 print(f"[overlay] drawing on the desktop: {self.desktop_overlay.style}/"

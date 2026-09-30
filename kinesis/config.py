@@ -164,7 +164,13 @@ DEFAULTS: Dict[str, Any] = {
     "gesture_lock": True,              # one gesture owns the hand until the hand opens again
     "gesture_lock_timeout_s": 6.0,     # safety: never stay locked longer than this
     "gesture_lock_open_fingers": 4,    # "open again" = at least this many fingers extended
-    "scroll_confirm_frames": 2,        # ring pinch must hold this long before scrolling starts
+    # --- what the held pinches do ---
+    # Thumb+ring was the pinch scroll; eye-gaze scrolling replaced it, so the ring pinch now carries
+    # the standard drag (text selection, moving files) and the pinky pinch is unbound.
+    "pinch_ring_action": "drag",       # drag | scroll | none
+    "pinch_pinky_action": "none",      # drag | none
+    "ring_confirm_frames": 2,          # ring pinch must hold this long before whatever it is bound
+                                       # to starts (was scroll_confirm_frames)
     "drag_confirm_frames": 2,          # thumb-pinky drag must hold this long too (also keeps
                                        # the scroll-vs-drag arbiter deterministic)
     "scroll_release_frames": 3,        # pinch flicker must not end a scroll in progress

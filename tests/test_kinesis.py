@@ -461,7 +461,21 @@ def test_no_right_click_while_index_pinching(cfg):
 
 
 # ============================================================ gestures: scroll + drag
-def test_ring_pinch_scrolls_and_freezes_cursor(cfg):
+def test_ring_pinch_drags_and_freezes_cursor(cfg):
+    """Thumb+ring carries the standard drag now that eye-gaze owns scrolling."""
+    d = Driver(cfg)
+    pose = make_pose(cfg, extended=("index", "middle"), pinches=("ring",), palm=(0.5, 0.6))
+    d.feed([pose], steps=3)
+    assert d.engine.active == "drag" and d.engine.lock == "drag"
+    assert len(d.of("mouse.down")) == 1, d.kinds()
+    assert not d.of("cursor.move"), "cursor must be frozen while dragging"
+    d.feed([make_pose(cfg, **OPEN)], steps=int(cfg["scroll_release_frames"]) + 1)
+    assert d.of("mouse.up"), "the drag must release"
+    assert d.engine.active is None
+
+
+def test_ring_pinch_still_scrolls_when_bound(cfg):
+    cfg.set("pinch_ring_action", "scroll")     # the gaze scroller replaced this; keep it working
     d = Driver(cfg)
     pose = make_pose(cfg, extended=("index", "middle"), pinches=("ring",), palm=(0.5, 0.6))
     d.feed([pose], steps=3)
@@ -482,6 +496,7 @@ def test_ring_pinch_scrolls_and_freezes_cursor(cfg):
 def test_brief_pinch_flicker_does_not_end_a_scroll(cfg):
     """The old behaviour ended a scroll the instant the ring pinch missed a frame, which is most of
     what made it feel broken: the hand is never perfectly still."""
+    cfg.set("pinch_ring_action", "scroll")     # scroll mechanics, now an opt-in binding
     d = Driver(cfg)
     scrolling = make_pose(cfg, extended=("index", "middle"), pinches=("ring",), palm=(0.5, 0.5))
     d.feed([scrolling], steps=4)
@@ -493,6 +508,7 @@ def test_brief_pinch_flicker_does_not_end_a_scroll(cfg):
 
 
 def test_adaptive_scroll_faster_when_hand_moves_faster(cfg):
+    cfg.set("pinch_ring_action", "scroll")
     slow = Driver(cfg)
     slow.feed([make_pose(cfg, pinches=("ring",), palm=(0.5, 0.5))], steps=3)
     slow.clear()
@@ -512,22 +528,32 @@ def test_adaptive_scroll_faster_when_hand_moves_faster(cfg):
     assert fast_total > slow_total, f"adaptive gain had no effect: {slow_total} vs {fast_total}"
 
 
-def test_pinky_pinch_drags(cfg):
+def test_pinky_pinch_does_nothing_by_default(cfg):
+    """Joe replaced the thumb-pinky drag with the thumb-ring drag; pinky is unbound."""
+    d = Driver(cfg)
+    d.feed([make_pose(cfg, extended=("index", "middle"), pinches=("pinky",))], steps=5)
+    assert not d.of("mouse.down"), f"the pinky pinch still drags: {d.kinds()}"
+    assert d.engine.active is None
+
+
+def test_pinky_pinch_drags_when_bound(cfg):
+    cfg.set("pinch_pinky_action", "drag")
     d = Driver(cfg)
     d.feed([make_pose(cfg, extended=("index", "middle"), pinches=("pinky",))], steps=4)
     assert d.of("mouse.down"), d.kinds()
     assert len(d.of("mouse.down")) == 1
-    d.feed([make_pose(cfg, **OPEN)], steps=3)
+    d.feed([make_pose(cfg, **OPEN)], steps=int(cfg["scroll_release_frames"]) + 1)
     assert d.of("mouse.up")
     assert d.engine.active is None
 
 
 def test_drag_does_not_freeze_cursor(cfg):
     d = Driver(cfg)
-    d.feed([make_pose(cfg, extended=("index", "middle"), pinches=("pinky",),
-                      tip=(0.40, 0.40))], steps=2)
+    d.feed([make_pose(cfg, extended=("index", "middle"), pinches=("ring",),
+                      tip=(0.40, 0.40))], steps=3)
+    assert d.engine.active == "drag", "this test is only meaningful while dragging"
     d.clear()
-    d.feed([make_pose(cfg, extended=("index", "middle"), pinches=("pinky",),
+    d.feed([make_pose(cfg, extended=("index", "middle"), pinches=("ring",),
                       tip=(0.70, 0.70))], steps=2)
     assert d.of("cursor.move"), "cursor must follow during a drag"
 
@@ -664,7 +690,7 @@ def test_cursor_does_not_move_without_index(cfg):
 
 def test_hand_loss_releases_everything(cfg):
     d = Driver(cfg)
-    d.feed([make_pose(cfg, extended=("index", "middle"), pinches=("pinky",))], steps=3)
+    d.feed([make_pose(cfg, extended=("index", "middle"), pinches=("ring",))], steps=3)
     assert d.engine.active == "drag"
     d.clear().feed([], steps=2)
     assert d.of("mouse.up"), "drag left held down when the hand vanished"
@@ -686,8 +712,8 @@ def test_release_all_covers_key_holds(cfg):
 def test_only_one_held_action_at_a_time(cfg):
     d = Driver(cfg)
     d.feed([make_pose(cfg, extended=("index", "middle"), pinches=("ring", "pinky"))], steps=4)
-    assert d.engine.active == "scroll", "scroll should win the arbiter"
-    assert not d.of("mouse.down"), "drag must not start while scrolling"
+    assert d.engine.active == "drag", "the ring pinch owns the drag"
+    assert len(d.of("mouse.down")) == 1, f"the unbound pinky pinch added a drag: {d.kinds()}"
 
 
 # ============================================================ end-to-end chain

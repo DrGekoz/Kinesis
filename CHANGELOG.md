@@ -5,6 +5,44 @@ All notable changes to Kinesis. The README stays compact on purpose: this is whe
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are
 [semantic](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] — drag moves to the ring pinch, scrolling becomes gaze-only
+
+Eye-gaze scrolling replaced the pinch scroll, so the held pinches were free to be re-cut.
+
+### Changed
+
+- **Thumb + ring pinch, held → drag** (text selection, moving files). It was the adaptive scroll. The
+  drag keeps the frozen cursor and now also keeps the release tolerance: three dropped frames of the
+  pinch will not lift the mouse button mid-selection.
+- **Thumb + pinky pinch → unbound.** It was the drag, and it is the one pose that had to go: with the
+  shaka (thumb + pinky *extended*) already in the vocabulary, a thumb-pinky *pinch* was the easiest
+  thing in the set to trigger by accident.
+- **Scrolling is gaze-only** (`gaze_scroll_mode: edge`, which already existed).
+- `pinch_ring_action` (`drag` | `scroll` | `none`) and `pinch_pinky_action` (`drag` | `none`) make both
+  old bindings recoverable by config. `scroll_confirm_frames` became `ring_confirm_frames`, since the
+  ring pinch is no longer necessarily a scroll.
+
+### The trap this creates, and the warning for it
+
+Scrolling now depends entirely on a calibrated gaze model. If you have neither a model nor the pinch
+fallback, you have **no scrolling at all**, so startup says so explicitly and names both fixes:
+
+    [scroll] gaze scrolling is the only scroll binding, and it cannot work without a model
+    [scroll] either run calibrate_gaze.bat, or keep the pinch scroll as a fallback:
+             run.bat --tune pinch_ring_action=scroll --save-config
+
+### Verified
+
+- 165 tests. The ring pinch drags and freezes the cursor; the pinky pinch does nothing by default and
+  drags when bound; a ring+pinky overlap produces exactly one drag; a drag survives two dropped pinch
+  frames without releasing the button; the hand vanishing mid-drag releases it; and the pinch scroll
+  still works when bound, including its confirm frames, flicker tolerance and speed ramp.
+- One test was **passing vacuously** after the rebind — `test_drag_does_not_freeze_cursor` used the
+  pinky pinch, so with pinky unbound the cursor moved for the wrong reason and the assertion held. It
+  now asserts it is actually in a drag before checking the cursor.
+
+---
+
 ## [1.6.0] — Ctrl+Tab gets its own two-hand gesture
 
 The open-hand lateral swipe stopped switching browser tabs. In its place, the mirror of Alt-Tab.

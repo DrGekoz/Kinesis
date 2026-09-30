@@ -61,6 +61,7 @@ class GestureEngine:
         # held-state
         self.active: Optional[str] = None          # scroll | drag | swipe
         self.lock: Optional[str] = None            # the gesture that owns the hand right now
+        self._drag_source: Optional[str] = None
         self.ctrl_held = False                     # Ctrl-Tab modifier session
         self._right_fist_since: Optional[float] = None
         self._ctrl_tab_session_start = 0.0
@@ -167,6 +168,22 @@ class GestureEngine:
             self._release_lock(now)       # never let a hand pose wedge the engine
             return True
         return False
+
+    def _begin_held(self, name: str, source: str, now: float) -> None:
+        """Start a held action (drag/scroll). It owns the hand until the pinch that started it lets go."""
+        self.active = name
+        self._drag_source = source
+        self._scroll_release = 0
+        self._take_lock(name, now)
+        self.last_note = f"{name} start"
+
+    def _end_held(self, note: str) -> None:
+        self.active = None
+        self._drag_source = None
+        self._scroll_anchor = None
+        self._scroll_smooth_y = None
+        self._scroll_release = 0
+        self.last_note = note
 
     def _other_hand(self, primary: Optional[HandPose],
                     left_hand: Optional[HandPose]) -> Optional[HandPose]:
@@ -344,39 +361,47 @@ class GestureEngine:
             self._shaka_since = None
 
         # ---------------- held actions: scroll / drag ----------------
+        # --- held pinches: thumb+ring carries the drag now, thumb+pinky is unbound ---
         ring = bool(pinches.get("ring"))
         pinky = bool(pinches.get("pinky"))
-        ring_conf = self._confirm("ring", ring, int(self.cfg["scroll_confirm_frames"]))
+        ring_action = str(self.cfg["pinch_ring_action"]).lower()      # drag | scroll | none
+        pinky_action = str(self.cfg["pinch_pinky_action"]).lower()    # drag | none
+        ring_conf = self._confirm("ring", ring, int(self.cfg["ring_confirm_frames"]))
+        pinky_conf = self._confirm("pinky", pinky, int(self.cfg["drag_confirm_frames"]))
+
         if self.active == "scroll":
-            if ring:
+            if ring and ring_action == "scroll":
                 self._scroll_release = 0
                 out.extend(self._scroll_step(primary, now, dt))
             else:
-                # a pinch that flickers off for a frame or two must not end a scroll in progress
+                # a pinch that flickers for a frame or two must not end a held action
                 self._scroll_release += 1
                 if self._scroll_release >= int(self.cfg["scroll_release_frames"]):
-                    self.active = None
-                    self._scroll_anchor = None
-                    self._scroll_smooth_y = None
-                    self.last_note = "scroll end"
+                    self._end_held("scroll end")
         elif self.active == "drag":
-            if not pinky:
-                out.append(Intent("mouse.up", button="left"))
-                self.active = None
-                self.last_note = "drag end"
+            src = self._drag_source
+            held = ((src == "ring" and ring and ring_action == "drag")
+                    or (src == "pinky" and pinky and pinky_action == "drag"))
+            if held:
+                self._scroll_release = 0
+            else:
+                # releasing a drag holds the selection for a few frames: one dropped frame of the
+                # pinch should not end a text selection mid-drag
+                self._scroll_release += 1
+                if self._scroll_release >= int(self.cfg["scroll_release_frames"]):
+                    out.append(Intent("mouse.up", button="left"))
+                    self._end_held("drag end")
         elif self.active is None and not fist_conf and can_start:
-            if ring_conf:
-                self.active = "scroll"
+            if ring_action == "drag" and ring_conf:
+                out.append(Intent("mouse.down", button="left"))
+                self._begin_held("drag", "ring", now)
+            elif ring_action == "scroll" and ring_conf:
                 self._scroll_anchor = primary.palm_px[1]
                 self._scroll_smooth_y = None
-                self._scroll_release = 0
-                self._take_lock("scroll", now)
-                self.last_note = "scroll start"
-            elif self._confirm("pinky", pinky, int(self.cfg["drag_confirm_frames"])):
+                self._begin_held("scroll", "ring", now)
+            elif pinky_action == "drag" and pinky_conf:
                 out.append(Intent("mouse.down", button="left"))
-                self.active = "drag"
-                self._take_lock("drag", now)
-                self.last_note = "drag start"
+                self._begin_held("drag", "pinky", now)
 
         # ---------------- tab swipe (open hand, fast lateral move) ----------------
         pinching_any = any(pinches.get(f) for f in ("index", "middle", "ring", "pinky"))

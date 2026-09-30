@@ -36,20 +36,20 @@ def test_a_gesture_keeps_the_hand_until_it_opens():
     """Once a gesture owns the hand, opening it is what releases the lock - not another pose."""
     d = Driver(cfg_with())
     d.feed([make_pose(d.cfg, extended=("index", "middle"), pinches=("ring",))], steps=4)
-    assert d.engine.active == "scroll" and d.engine.lock == "scroll"
+    assert d.engine.active == "drag" and d.engine.lock == "drag"
     d.feed([make_pose(d.cfg, extended=("index", "middle"))], steps=2)     # still not open
-    assert d.engine.lock == "scroll", "the lock let go before the hand opened"
+    assert d.engine.lock == "drag", "the lock let go before the hand opened"
     d.feed([make_pose(d.cfg, **OPEN)], steps=1)
     assert d.engine.lock is None
 
 
-def test_release_sweep_after_scroll_cannot_swipe():
-    """Letting go of a scroll sweeps the hand through the open pose with lateral motion, which is
-    exactly what the tab swipe looks for."""
-    d = Driver(cfg_with())
+def test_release_sweep_after_a_held_action_cannot_swipe():
+    """Letting go of a held action sweeps the hand through the open pose with lateral motion, which
+    is exactly what the tab swipe looks for."""
+    d = Driver(cfg_with(swipe_action="tab"))     # arm the swipe, or the test proves nothing
     d.feed([make_pose(d.cfg, extended=("index", "middle"), pinches=("ring",), palm=(0.5, 0.6))],
            steps=4)
-    assert d.engine.active == "scroll"
+    assert d.engine.active == "drag"
     d.clear()
     for x in (0.46, 0.42, 0.38, 0.34, 0.30, 0.26, 0.22):
         d.feed([make_pose(d.cfg, **OPEN, palm=(x, 0.6))], steps=1)
@@ -59,7 +59,7 @@ def test_release_sweep_after_scroll_cannot_swipe():
 def test_lock_times_out_so_a_pose_cannot_wedge_the_engine():
     d = Driver(cfg_with(gesture_lock_timeout_s=0.2))
     d.feed([make_pose(d.cfg, extended=("index", "middle"), pinches=("ring",))], steps=4)
-    assert d.engine.lock == "scroll"
+    assert d.engine.lock == "drag"
     d.feed([make_pose(d.cfg, extended=("index", "middle", "pinky"))], steps=12)   # never opens
     assert d.engine.lock is None, "a stuck hand pose locked the engine out"
 
@@ -120,12 +120,24 @@ def test_the_swipe_no_longer_switches_tabs():
 
 
 def test_two_missed_pinch_frames_do_not_end_a_scroll():
-    d = Driver(cfg_with())
+    d = Driver(cfg_with(pinch_ring_action="scroll"))
     scroll = make_pose(d.cfg, extended=("index", "middle"), pinches=("ring",), palm=(0.5, 0.5))
     blink = make_pose(d.cfg, extended=("index", "middle"), palm=(0.5, 0.5))
     d.feed([scroll], steps=4)
     d.feed([blink], steps=2)                        # fewer than scroll_release_frames
     assert d.engine.active == "scroll", "a two-frame pinch dropout killed the scroll"
+
+
+def test_two_missed_pinch_frames_do_not_end_a_drag():
+    """The same tolerance protects a text selection: one dropped frame must not release the button."""
+    d = Driver(cfg_with())
+    scroll = make_pose(d.cfg, extended=("index", "middle"), pinches=("ring",), palm=(0.5, 0.5))
+    blink = make_pose(d.cfg, extended=("index", "middle"), palm=(0.5, 0.5))
+    d.feed([scroll], steps=4)
+    assert d.engine.active == "drag"
+    d.feed([blink], steps=2)
+    assert d.engine.active == "drag", "a two-frame pinch dropout ended the selection"
+    assert not d.of("mouse.up"), f"the mouse button came up mid-drag: {d.kinds()}"
 
 
 def _alt_tab_setup(cfg=None):
