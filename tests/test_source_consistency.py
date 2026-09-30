@@ -26,6 +26,30 @@ def real_monitor(device, left, top, width=1920, height=1080, primary=False):
                      work=(left, top, left + width, top + height))
 
 
+def test_config_is_never_assigned_by_item():
+    """`cfg["key"] = value` looks right and raises TypeError: Config exposes get/set, not __setitem__.
+
+    Seven of these shipped - the first-run screen question, Save and apply in the settings window,
+    --settings, --enable-monitors, and calibrate_gaze --camera - every one a crash on the path it was
+    on, and none reachable from a unit test because they all need a display or a TTY.
+    """
+    import re
+    offenders = []
+    for path in sorted(ROOT.rglob("*.py")):
+        if "vendor" in path.parts or path.parts[-2:-1] == ("tests",):
+            continue
+        for i, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+            if re.search(r'cfg\["[a-z_]+"\]\s*=(?!=)', line):
+                offenders.append(f"{path.relative_to(ROOT)}:{i}")
+    assert not offenders, ("use cfg.set(...) - Config has no item assignment: " + ", ".join(offenders))
+
+
+def test_config_set_actually_works():
+    cfg = Config()
+    cfg.set("cursor_source", "hand")
+    assert cfg["cursor_source"] == "hand"
+
+
 def test_monitor_exposes_the_fields_the_code_uses():
     fields = set(getattr(w.Monitor, "__annotations__", {})) | set(dir(w.Monitor))
     for name in ("handle", "device", "left", "top", "right", "bottom", "primary", "work",

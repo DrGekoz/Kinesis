@@ -247,8 +247,8 @@ def run(cfg, monitors: Sequence, theme: Optional[str] = None,
     def act(kind: str):
         if kind == "saved":
             state["devices"] = [d for d, sw in switches if sw.on]
-            cfg["enabled_monitors"] = normalise(state["devices"], monitors)
-            cfg["monitors_configured"] = True
+            cfg.set("enabled_monitors", normalise(state["devices"], monitors))
+            cfg.set("monitors_configured", True)
             cfg.save()
         result["action"] = kind
         root.destroy()

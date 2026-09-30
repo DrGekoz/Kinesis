@@ -378,7 +378,7 @@ def main(argv=None) -> int:
         return cmd_vcam_demo(cfg, args.vcam_demo_seconds)
 
     if args.settings:
-        cfg["open_settings"] = True
+        cfg.set("open_settings", True)
 
     if args.save_config:
         cfg.save()
@@ -415,8 +415,8 @@ def main(argv=None) -> int:
             for m in dropped:
                 print(f"  left out: {m}")
         if chosen is not None:
-            cfg["enabled_monitors"] = chosen
-            cfg["monitors_configured"] = True
+            cfg.set("enabled_monitors", chosen)
+            cfg.set("monitors_configured", True)
             cfg.save()
 
     app = KinesisApp(cfg)

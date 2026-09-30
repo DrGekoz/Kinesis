@@ -64,6 +64,9 @@ class GestureEngine:
         self.active: Optional[str] = None          # scroll | drag | swipe
         self.lock: Optional[str] = None            # the gesture that owns the hand right now
         self._drag_source: Optional[str] = None
+        # The pointer comes from the eyes now. The app turns this on only when gaze cannot drive it
+        # (no calibration, or looking away) so the mouse is never left dead.
+        self.cursor_from_hand = False
         self._zoom_active = False                  # two-hand pinch zoom
         self._zoom_start = 0.0
         self._zoom_last = 0.0
@@ -451,6 +454,8 @@ class GestureEngine:
 
     # ------------------------------------------------------------------ pieces
     def _cursor_intent(self, primary: HandPose) -> List[Intent]:
+        if not self.cursor_from_hand:
+            return []                    # the pointer follows the eyes; see KinesisApp._gaze_cursor
         if not primary.extended.get("index"):
             return []
         x, y = self.map_cursor(primary.index_tip_norm)

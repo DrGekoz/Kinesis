@@ -37,6 +37,11 @@ DEFAULTS: Dict[str, Any] = {
     "filter_beta": 0.05,               # higher = less lag on fast motion
     "filter_derivative_cutoff": 1.0,
     "deadband_px": 1.5,                # ignore sub-pixel residue => truly still cursor
+    # --- the pointer follows the eyes (cursor_source = gaze) ---
+    "cursor_source": "gaze",           # gaze | hand
+    "cursor_fallback": "hand",         # hand | hold - what to do before gaze is calibrated
+    "gaze_cursor_deadband_px": 3.0,    # a resting eye must not jitter the pointer
+    "gaze_cursor_smoothing": 0.55,     # 0 = raw, 1 = never moves: EMA on the eye cursor
     "cursor_gain": 1.0,                # 1.0 = snap 1:1
     "active_margin": 0.10,             # frame edge trimmed from the tracking area
 
@@ -133,7 +138,7 @@ DEFAULTS: Dict[str, Any] = {
     "gaze_model_path": "gaze_model.pkl",
     "gaze_smoother": "kalman_ema",      # kalman_ema | kalman | none
     "gaze_ema_alpha": 0.25,             # higher = smoother, more lag (eyetrax convention)
-    "gaze_hz": 10.0,                    # face landmarking is rate limited; hands stay at camera rate
+    "gaze_hz": 20.0,                    # face landmarking is rate limited; hands stay at camera rate
     "gaze_max_age_s": 0.6,              # a stale point stops counting as "looking at"
     "gaze_target_enabled": True,        # gaze selects the target window for gestures
     "gaze_target_refresh_s": 0.1,

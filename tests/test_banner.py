@@ -15,6 +15,13 @@ PRESENT = ("thumb + ring pinch", "drag", "zoom in", "zoom out", "right fist held
            "left fist held", "shaka", "push to talk", "end key")
 
 
+def test_banner_says_the_eyes_move_the_cursor():
+    """v1.11.0: the pointer follows gaze, so the banner must not still offer a pointing hand."""
+    text = GESTURE_HELP.lower()
+    assert "eye gaze" in text and "move the cursor" in text
+    assert "index finger" not in text, "the banner still lists the index finger as the pointer"
+
+
 def test_banner_does_not_advertise_replaced_bindings():
     text = GESTURE_HELP.lower()
     for gone in GONE:

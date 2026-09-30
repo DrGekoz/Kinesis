@@ -13,10 +13,10 @@ Control Windows with your hands through one webcam. Look at a window and it beco
 <img src="https://img.shields.io/badge/platform-Windows-06b6d4?style=for-the-badge" alt="Platform">
 <img src="https://img.shields.io/badge/python-3.11-8b5cf6?style=for-the-badge" alt="Python">
 <img src="https://img.shields.io/badge/latency-~46ms-f43f5e?style=for-the-badge" alt="Latency">
-<img src="https://img.shields.io/badge/tests-235%20passing-22c55e?style=for-the-badge" alt="Tests">
+<img src="https://img.shields.io/badge/tests-248%20passing-22c55e?style=for-the-badge" alt="Tests">
 <img src="https://img.shields.io/badge/virtual%20camera-OBS-8b5cf6?style=for-the-badge" alt="Virtual camera">
 
-[Gestures](#gestures) · [Quick start](#quick-start) · [Install](#install) · [Which screens](#which-screens) · [Calibration](#calibration) · [Gaze](#gaze) · [Settings](#settings) · [Overlay](#overlay) · [Dictation](#dictation) · [Config](#config) · [Troubleshooting](#troubleshooting) · [Credits](#credits)
+[Gestures](#gestures) · [Quick start](#quick-start) · [Install](#install) · [Which screens](#which-screens) · [Calibration](#calibration) · [Eyes as the pointer](#the-pointer-is-your-eyes) · [Gaze](#gaze) · [Settings](#settings) · [Overlay](#overlay) · [Dictation](#dictation) · [Config](#config) · [Troubleshooting](#troubleshooting) · [Credits](#credits)
 
 </div>
 
@@ -156,6 +156,26 @@ everything still works — gaze falls back to hand aim, then the focused window.
 Not sure whether eye tracking is working at all? `tools\check_gaze.py` tests each stage in turn -
 vendored source, camera, face, landmarks, features, model, prediction - and says which one is broken.
 
+## The pointer is your eyes
+
+The cursor follows your **gaze**, not your hand. Calibrate once (`calibrate_gaze.bat`) and the pointer
+goes where you look, at the rate in `gaze_hz`, smoothed and deadbanded so a resting eye does not shake
+it. Every gesture still works exactly as before - a pinch clicks, a ring pinch drags - but they act
+**where you are looking** instead of where your hand is, and a drag selects with your eyes while the
+hand holds the button.
+
+There is no pointing gesture any more. Hand tracking still drives clicks, drags, scrolling, tabs,
+minimising and push-to-talk; it just does not move the pointer.
+
+Before calibration the hand keeps driving the pointer (`cursor_fallback = hand`), because a mouse that
+cannot move is worse than a prompt to calibrate. Set it to `hold` if you would rather the pointer
+freeze until gaze is ready. Looking away holds the pointer too - it never snaps back to a hand.
+
+```bat
+run.bat --tune cursor_source=hand       go back to a pointing hand
+run.bat --tune gaze_hz=30 --save-config a smoother pointer, if your machine keeps up
+```
+
 ## Gaze
 
 Eye tracking (via [EyeTrax](#credits)) decides **which window a gesture applies to**. Look at a
@@ -291,6 +311,10 @@ Everything lives in `kinesis_config.json` and every key can be overridden live w
 | `gaze_scroll_mode` / `gaze_scroll_speed` | edge / 480 | Gaze scrolling on/off and speed |
 | `enabled_monitors` / `monitors_configured` | [] / false | Which screens Kinesis uses, by device name (empty = all). Set by the first-run question or the settings window |
 | `settings_hotkey` | f2 | Opens the settings window while running; `none` disables it |
+| `cursor_source` | gaze | What moves the pointer: `gaze` or `hand` |
+| `cursor_fallback` | hand | Before calibration: `hand` still moves it, or `hold` freezes the pointer |
+| `gaze_cursor_deadband_px` / `gaze_cursor_smoothing` | 3.0 / 0.55 | Eye-cursor jitter floor and smoothing |
+| `gaze_hz` | 20 | How often the eyes are read; the pointer is only as smooth as this |
 | `camera_name` / `camera_fov_deg` | auto / 0 | Override the camera, or its diagonal field of view |
 | `bezel_mm` / `assumed_distance_mm` | 10 / 700 | Physical gap between screens; seat distance before calibration |
 | `eye_corner_mm` / `ipd_mm` | 90 / 63 | Your own eye span, for the distance estimate |
@@ -319,7 +343,7 @@ Everything lives in `kinesis_config.json` and every key can be overridden live w
 ## Verification
 
 ```bat
-.venv\Scripts\python -m pytest tests -q       235 passed
+.venv\Scripts\python -m pytest tests -q       248 passed
 .venv\Scripts\python tools\verify_actions.py  16/16 live OS checks
 .venv\Scripts\python tools\verify_overlay.py  12/12 against the real compositor
 .venv\Scripts\python tools\check_tabs.py      tab-strip detection against your open browsers

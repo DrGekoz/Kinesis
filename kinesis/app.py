@@ -35,7 +35,7 @@ BANNER = r"""
 GESTURE_HELP = """
  gesture                            action
  ---------------------------------  --------------------------------------------------
- index finger                       move cursor (snaps, no easing)
+ eye gaze                           MOVE THE CURSOR (run calibrate_gaze.bat once)
  thumb + index pinch                left click          (twice quickly = double click)
  thumb + middle pinch               right click
  thumb + ring pinch (hold)          drag                (text selection, file drags)
@@ -47,7 +47,7 @@ GESTURE_HELP = """
  open hand -> closed fist           minimise            (exits fullscreen first if needed)
  closed fist -> open hand           maximise / fullscreen  (f = YouTube, F11 = otherwise)
  thumb + pinky out (shaka)          hold Ctrl+Space     (push to talk)
- gaze (needs calibrate_gaze.bat)    scroll, pick the target window, click browser tabs
+ eye gaze, continued                scroll, pick the target window, click browser tabs
  END key                            quit
 """
 
@@ -100,8 +100,8 @@ class KinesisApp:
         if not cfg["monitors_configured"] and sys.stdin and sys.stdin.isatty() and not cfg["dry_run"]:
             chosen = monitor_set.ask(all_monitors, labels=self._monitor_labels(all_monitors))
             if chosen is not None:
-                cfg["enabled_monitors"] = chosen
-                cfg["monitors_configured"] = True
+                cfg.set("enabled_monitors", chosen)
+                cfg.set("monitors_configured", True)
                 cfg.save()
         kept, disabled = monitor_set.select_monitors(all_monitors, cfg["enabled_monitors"])
         self.virtual_rect = monitor_set.union_rect(kept)
@@ -127,6 +127,7 @@ class KinesisApp:
         self._settings_hotkey = self._hotkey_vk(str(cfg.get("settings_hotkey", "f2") or ""))
         self._settings_armed = True
         self._open_settings_at_start = bool(cfg.get("open_settings", False))
+        self._eye_cursor: Optional[tuple] = None    # smoothed eye-driven pointer position
         self.hud = Hud(cfg, self.monitors)
         self.preview = bool(cfg["preview"] if preview is None else preview)
         self._stop = False
@@ -161,6 +162,12 @@ class KinesisApp:
             print(f"  left out of tracking: {names}")
             print("  change with: run.bat --enable-monitors 1,2   (or --all-monitors)")
         print(f"virtual desktop: {w.virtual_screen()}")
+        if str(self.cfg["cursor_source"]).lower() == "gaze":
+            if self.gaze.is_calibrated:
+                print("cursor source: your eyes (cursor_source=gaze)")
+            else:
+                print("cursor source: your eyes once calibrated - until then the hand still moves "
+                      "it (cursor_fallback=" + str(self.cfg["cursor_fallback"]) + ")")
         if self.calibration.targets:
             print("aim calibration:")
             for t in self.calibration.targets:
@@ -404,6 +411,7 @@ class KinesisApp:
                 dt = max(now - self._prev, 1e-4) if self._prev else 1e-4
                 intents = self.gestures.update(poses, aim.index if aim else None, now, dt,
                                               target_hwnd=target_hwnd)
+                intents.extend(self._gaze_cursor(gaze_state))
                 intents.extend(self.gaze_scroller.update(gaze_state, now, dt))
                 self._annotate_gaze_click(intents, gaze_state, now)
                 self._prepare_ptt_focus(intents, gaze_state, now)
@@ -500,6 +508,41 @@ class KinesisApp:
             return monitor_set.labels_from_hardware(monitor_hardware(monitors), monitors)
         except Exception:
             return {}
+
+    def _gaze_cursor(self, gaze) -> list:
+        """The pointer, driven by the eyes.
+
+        One place decides it: gestures._cursor_intent refuses to move the pointer while
+        `cursor_from_hand` is false, and this feeds the moves instead. Actions are unchanged - a pinch
+        still clicks, a ring pinch still drags - but they act where you are LOOKING rather than where
+        your hand is, and a drag follows your eyes.
+        """
+        want_gaze = str(self.cfg["cursor_source"]).lower() == "gaze"
+        if not want_gaze:
+            self.gestures.cursor_from_hand = True
+            return []
+
+        usable = bool(self.gaze._estimator) and gaze is not None and gaze.valid
+        if not usable:
+            # Never leave the mouse dead: before calibration (or while looking away) either fall back
+            # to the hand, or hold the pointer exactly where it is if that is what was asked for.
+            self.gestures.cursor_from_hand = str(self.cfg["cursor_fallback"]).lower() != "hold"
+            return []
+
+        self.gestures.cursor_from_hand = False
+        x, y = float(gaze.x), float(gaze.y)
+        if self._eye_cursor is None:
+            self._eye_cursor = (x, y)
+            return [Intent("cursor.move", x=int(x), y=int(y))]
+
+        a = min(max(float(self.cfg["gaze_cursor_smoothing"]), 0.0), 0.98)
+        sx = a * self._eye_cursor[0] + (1.0 - a) * x
+        sy = a * self._eye_cursor[1] + (1.0 - a) * y
+        dead = float(self.cfg["gaze_cursor_deadband_px"])
+        if abs(sx - self._eye_cursor[0]) < dead and abs(sy - self._eye_cursor[1]) < dead:
+            return []                    # a resting eye does not shake the pointer
+        self._eye_cursor = (sx, sy)
+        return [Intent("cursor.move", x=int(sx), y=int(sy))]
 
     def _open_settings(self) -> None:
         """Pause input, show the settings window, apply whatever came back.

@@ -547,15 +547,18 @@ def test_pinky_pinch_drags_when_bound(cfg):
     assert d.engine.active is None
 
 
-def test_drag_does_not_freeze_cursor(cfg):
+def test_a_drag_does_not_move_the_pointer_either(cfg):
+    """A drag selects where you look: the hand holds the button, the eyes do the moving. So the
+    button must go down and the hand must NOT drag the pointer anywhere."""
     d = Driver(cfg)
     d.feed([make_pose(cfg, extended=("index", "middle"), pinches=("ring",),
                       tip=(0.40, 0.40))], steps=3)
     assert d.engine.active == "drag", "this test is only meaningful while dragging"
+    assert d.of("mouse.down"), "the drag must still press the button"
     d.clear()
     d.feed([make_pose(cfg, extended=("index", "middle"), pinches=("ring",),
                       tip=(0.70, 0.70))], steps=2)
-    assert d.of("cursor.move"), "cursor must follow during a drag"
+    assert not d.of("cursor.move"), "the hand moved the pointer during a drag"
 
 
 # ============================================================ gestures: swipe
@@ -664,8 +667,17 @@ def test_shaka_is_not_a_fist(cfg):
 
 
 # ============================================================ gestures: cursor + safety
-def test_cursor_snaps_to_index_tip(cfg):
+def test_a_pointing_hand_does_not_move_the_cursor(cfg):
+    """The pointer comes from the eyes now: pointing must not drag it around (v1.11.0)."""
     d = Driver(cfg)
+    d.feed([make_pose(cfg, extended=("index",), tip=(0.75, 0.25))], steps=3)
+    assert not d.of("cursor.move"), "the hand is still moving the pointer"
+
+
+def test_the_hand_still_drives_the_cursor_when_asked(cfg):
+    """The pre-calibration fallback: cursor_fallback = hand puts pointing back in charge."""
+    d = Driver(cfg)
+    d.engine.cursor_from_hand = True
     d.feed([make_pose(cfg, extended=("index",), tip=(0.75, 0.25))], steps=3)
     moves = d.of("cursor.move")
     assert moves, "no cursor movement from a pointing hand"

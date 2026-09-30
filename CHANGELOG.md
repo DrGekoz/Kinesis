@@ -5,6 +5,34 @@ All notable changes to Kinesis. The README stays compact on purpose: this is whe
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are
 [semantic](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.0] — the mouse pointer follows your eye gaze
+
+### Changed
+
+- **The pointer is driven by the eyes.** `cursor_source` defaults to `gaze`: the cursor goes where you
+  look, at `gaze_hz` (default 20, up from 10), smoothed with a 3 px deadband so a resting eye does not
+  shake it. Clicks, drags, scrolls, tabs and push-to-talk are untouched - they simply act where you are
+  looking rather than where your hand is, and a drag now selects with your eyes while the hand holds
+  the button.
+- **There is no pointing gesture any more.** The index finger no longer moves the pointer; hand
+  tracking keeps its other eleven jobs. The console banner and the README no longer advertise it.
+
+### Added
+
+- `cursor_source` (`gaze` | `hand`) and `cursor_fallback` (`hand` | `hold`). Before gaze is
+  calibrated the hand still drives the pointer by default, because a mouse that cannot move is worse
+  than a prompt to calibrate; `hold` freezes it instead. Looking away holds the pointer - it never
+  snaps back to a hand. Calibrating mid-session takes the pointer back with no restart.
+- `gaze_cursor_deadband_px`, `gaze_cursor_smoothing` and a raised `gaze_hz` for a usable pointer.
+
+### Fixed
+
+- **Seven places assigned settings with `cfg["key"] = value`, which raises TypeError** - `Config`
+  exposes `get`/`set`, not item assignment. Every one of them was a crash on the path it sat on: the
+  first-run screen question, Save and apply in the settings window, `--settings`, `--enable-monitors`
+  and `calibrate_gaze.py --camera`. All fixed, with a source guard test so the pattern cannot come
+  back.
+
 ## [1.10.0] — the settings window
 
 ### Added

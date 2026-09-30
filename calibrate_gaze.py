@@ -285,7 +285,7 @@ def main() -> int:
     w.set_dpi_aware()
     cfg = Config.load()
     if args.camera is not None:
-        cfg["camera_index"] = args.camera
+        cfg.set("camera_index", args.camera)
 
     monitors = w.enumerate_monitors()
     if not monitors:
