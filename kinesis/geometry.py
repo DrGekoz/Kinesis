@@ -296,6 +296,22 @@ class DeskLayout:
         return max(tops) - min(tops)
 
 
+def gaze_to_canvas(gaze_x: float, gaze_y: float, canvas_w: int, canvas_h: int) -> Tuple[float, float]:
+    """Virtual-desktop coordinates -> canvas coordinates.
+
+    Stretched proportionally so the whole virtual desk fits the canvas: on a 4-screen row that puts
+    monitor 1 at the left edge and the last at the right, and it keeps the proportional position
+    within that span. What matters is that it is monotonic and consistent between the calibration
+    display and the virtual camera, not that it is 1:1 with the real desk.
+    """
+    left, top, width, height = w.virtual_screen()
+    if width <= 0 or height <= 0:
+        return 0.0, 0.0
+    fx = min(max((gaze_x - left) / float(width), 0.0), 1.0)
+    fy = min(max((gaze_y - top) / float(height), 0.0), 1.0)
+    return (fx * (canvas_w - 1), fy * (canvas_h - 1))
+
+
 def physical_layout(monitors: Sequence[w.Monitor], hardware: Sequence[MonitorHardware],
                     bezel_mm: float = 10.0) -> DeskLayout:
     """Lay the screens out in physical millimetres, left to right.

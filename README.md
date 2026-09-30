@@ -8,17 +8,17 @@ Control Windows with your hands through one webcam. Look at a window and it beco
 
 Built for desks with several monitors, not one.
 
-**11 hand gestures · desk geometry · multi-monitor support · ~46 ms end-to-end · smooth cursor · gaze-targeted windows · push-to-talk dictation · chroma-key virtual camera · 95 tests**
+**11 hand gestures · desk geometry · multi-monitor support · ~46 ms end-to-end · smooth cursor · gaze-targeted windows · push-to-talk dictation · chroma-key virtual camera · 117 tests**
 
 <a href="https://github.com/DrGekoz/Kinesis/stargazers"><img src="https://img.shields.io/github/stars/DrGekoz/Kinesis?style=for-the-badge&color=f59e0b" alt="Stars"></a>
 <a href="https://github.com/DrGekoz/Kinesis/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-22c55e?style=for-the-badge" alt="License"></a>
 <img src="https://img.shields.io/badge/platform-Windows-06b6d4?style=for-the-badge" alt="Platform">
 <img src="https://img.shields.io/badge/python-3.11-8b5cf6?style=for-the-badge" alt="Python">
 <img src="https://img.shields.io/badge/latency-~46ms-f43f5e?style=for-the-badge" alt="Latency">
-<img src="https://img.shields.io/badge/tests-95%20passing-22c55e?style=for-the-badge" alt="Tests">
+<img src="https://img.shields.io/badge/tests-117%20passing-22c55e?style=for-the-badge" alt="Tests">
 <img src="https://img.shields.io/badge/virtual%20camera-OBS-8b5cf6?style=for-the-badge" alt="Virtual camera">
 
-[Features](#features) · [Multi-monitor](#multi-monitor-support) · [Desk geometry](#desk-geometry) · [Gestures](#gesture-reference) · [Gaze](#gaze-your-eyes-pick-the-window) · [Dictation](#dictation-with-handy) · [Virtual camera](#virtual-camera-stream-while-kinesis-uses-the-camera) · [Latency](#latency) · [Install](#install) · [Config](#configuration) · [Architecture](#architecture) · [Credits](#credits)
+[Features](#features) · [Multi-monitor](#multi-monitor-support) · [Desk geometry](#desk-geometry) · [Gestures](#gesture-reference) · [Gaze](#gaze-your-eyes-pick-the-window) · [Overlay styles](#overlay-styles) · [Dictation](#dictation-with-handy) · [Virtual camera](#virtual-camera-stream-while-kinesis-uses-the-camera) · [Latency](#latency) · [Install](#install) · [Config](#configuration) · [Architecture](#architecture) · [Credits](#credits)
 
 </div>
 
@@ -191,6 +191,50 @@ Both sides are configurable:
 
 Handy's other default bindings also work well with Kinesis's window gestures: `Ctrl+Shift+Space` (post-process the transcript with an LLM) and `Ctrl+Shift+D` (Windows/Linux): both are one gesture away.
 
+## Overlay styles
+
+The gaze layer is an accumulation buffer, not a drawn dot: each frame the layer is faded, the frame's
+contribution stamped into it, the layer blurred into itself for bloom, and the whole thing composited
+additively. Trails, phosphor persistence and glow all fall out of that one trick.
+
+| Style | What it looks like |
+|---|---|
+| `pointer` | A crisp reticle with a ring. Nothing persists — the functional choice. |
+| `comet` | A tapered tail behind the reticle, fading like a phosphor trace. **Default.** |
+| `path` | The last ~48 samples drawn as a tapering polyline — the eye-tracking gaze-plot look. |
+| `heatmap` | Accumulated dwell through a colormap: where you have been looking, over time. |
+| `heatmap_comet` | Both at once: the density underneath, the live trail on top. |
+| `none` | No gaze layer at all — hand skeleton only. |
+
+Five themes (`ember`, `cyan`, `violet`, `lime`, `ice`) recolour the reticle, tail and colormap
+together. Telemetry is drawn with a real TTF (Bahnschrift) through Pillow with per-string tiles and a
+soft glow behind the text — OpenCV's Hershey fonts are the reason the old HUD looked like a 1994
+demo.
+
+See the styles without a face in frame:
+
+```
+run.bat --vcam-demo                           20 seconds of synthetic gaze, default style
+run.bat --vcam-demo --vcam-style heatmap_comet
+run.bat --vcam-demo --vcam-style path --vcam-theme cyan
+```
+
+Then pick **OBS Virtual Camera** in OBS, Discord, or the Windows Camera app and watch it.
+
+Cost per composed 1080p frame, measured (`tools/bench_overlay.py`) — this runs on the virtual
+camera's own sender thread, so it never touches hand latency:
+
+| Style | Median | p90 |
+|---|---|---|
+| `pointer` / `comet` / `path` | 14–15 ms | 17–18 ms |
+| `heatmap` | 21 ms | 22 ms |
+| `heatmap_comet` | 25 ms | 28 ms |
+| `none` | 5.5 ms | 6.3 ms |
+
+The first cut of this cost **59–140 ms per frame**: the float layers were full resolution, which is
+~74 MB of temporaries per frame at 1080p. Rendering at 1/3 resolution and upscaling once on composite
+is what made it viable, and a test pins that reduction so it cannot quietly regress.
+
 ## Virtual camera: stream while Kinesis uses the camera
 
 Kinesis sends the camera feed back out as a webcam, with the tracking overlays drawn on it, so anything that consumes a camera — OBS, Discord, Zoom, Teams — can show your webcam while Kinesis is using it.
@@ -304,6 +348,12 @@ Everything lives in `kinesis_config.json` (written by `--save-config`) and every
 | `gaze_scroll_mode` / `gaze_scroll_speed` | edge / 480 | Gaze scrolling on/off and how fast |
 | `gaze_scroll_warp_cursor` | true | Park the cursor on the gaze point so the wheel lands correctly |
 | `vcam_mode` / `vcam_width` | passthrough / 640x480 | Virtual camera mode and size |
+| `vcam_style` / `vcam_theme` | comet / ember | Overlay look and colour theme |
+| `vcam_trail_decay` | 0.86 | Layer fade per frame: higher = longer-lasting trail |
+| `vcam_tail_points` | 48 | Samples kept for the `path` polyline |
+| `vcam_glow` | 1.15 | Bloom strength; 0 disables the blur pass |
+| `vcam_heat_radius` / `vcam_heat_gain` | 26 / 1.35 | Heatmap stamp size and contrast |
+| `vcam_visual_scale` | 3 | Render layers at 1/N and upscale on composite (cost vs quality) |
 | `aim_hysteresis_deg` / `aim_max_distance_deg` | 7 / 42 | Aim switching margin and the gate beyond which aim is unknown |
 | `geometry_enabled` | true | Use camera/monitor physical data for gaze and pointing |
 | `camera_name` / `camera_fov_deg` | (auto) / 0 | Override the detected camera, or its diagonal FoV (0 = use the model table) |
@@ -348,6 +398,8 @@ kinesis/
   actions.py    intents -> Windows actions, gaze/aim window targeting, focus-before-keyboard,
                 deferred fullscreen-then-minimise
   gaze.py       EyeTrax wrapped around Kinesis's own frames: rate-limited, smoothed, persisted model
+  gazevis.py    the overlay renderer: decay buffer + bloom + heatmap + themes + Pillow text tiles
+                (numpy/OpenCV only, no OS calls)
   vcam.py       virtual camera: passthrough and chroma-keyable overlay, on its own sender thread
   hud.py        preview overlay (pose, aim, gaze, target window, action, fps, latency)
   app.py        wiring + main loop
@@ -356,11 +408,11 @@ kinesis/
 ## Verification
 
 ```
-.venv\Scripts\python -m pytest tests -q      →  95 passed
+.venv\Scripts\python -m pytest tests -q      →  117 passed
 .venv\Scripts\python tools\verify_actions.py →  16/16 live checks
 ```
 
-**95 deterministic tests** cover all eleven gestures, the pose classifier including rotation invariance, the click/close-flick arbitration, hysteresis and cooldowns, the aim classifier against a real four-monitor layout, the One-Euro filter, deadband, wheel accumulation, gaze edge-scroll (dwell, direction, ramp, stop, cooldown, stale rejection, cursor warp), target and focus carrying, the chroma-green overlay, hand and gaze compositing, release-all safety, and the desk geometry: EDID parsing against a hand-built block laid out to the real spec, FoV-from-diagonal across aspect ratios, the distance round trip, physical row layout with bezels, vertical misalignment, PPI, angular spans, screen selection by angle, seat-drift gating, and the landmark tap turning eye corners into a distance. Landmark geometry is synthesised with exact joint angles (extended finger = collinear = 180°, curled = rotated at the PIP = 70°), so every classification is checked against a known-correct input rather than a recording.
+**117 deterministic tests** cover all eleven gestures, the pose classifier including rotation invariance, the click/close-flick arbitration, hysteresis and cooldowns, the aim classifier against a real four-monitor layout, the One-Euro filter, deadband, wheel accumulation, gaze edge-scroll (dwell, direction, ramp, stop, cooldown, stale rejection, cursor warp), target and focus carrying, the chroma-green overlay, hand and gaze compositing, release-all safety, and the desk geometry: EDID parsing against a hand-built block laid out to the real spec, FoV-from-diagonal across aspect ratios, the distance round trip, physical row layout with bezels, vertical misalignment, PPI, angular spans, screen selection by angle, seat-drift gating, and the landmark tap turning eye corners into a distance. Landmark geometry is synthesised with exact joint angles (extended finger = collinear = 180°, curled = rotated at the PIP = 70°), so every classification is checked against a known-correct input rather than a recording.
 
 **The desk model** is checked against this machine's real hardware: four screens identified by model (a 42" TV, two Lenovo L27i-30 and a Kogan KAMN27F18WA), physical sizes from EDID, 276 cm of active area, angular span and per-screen separation from a 70 cm seat, and the C920's focal length in pixels derived from its listed FoV.
 
@@ -369,6 +421,8 @@ kinesis/
 **16 live checks** create a real window and drive it through the same ctypes path the gestures use, asserting that the OS actually changed state: `IsIconic`/`IsZoomed` transitions, `SendInput` keys, the YouTube-vs-`F11` fullscreen choice, dry-run logging, wheel-delta accumulation, and gaze-point → window resolution including the title blocklist and a point outside the window.
 
 **The virtual camera** is verified against the real device: 45 frames sent synchronously at 28.4 fps plus 30 through the threaded publish path, 0 dropped, to "OBS Virtual Camera".
+
+**The overlay renderer** has its own suite (styles, decay, heat stamping, bloom, text cache, clamping) and a measured budget: `tools/bench_overlay.py` composes every style at 1920x1080 and reports median/p90. The first implementation measured 59–140 ms per frame, which is how the full-resolution float layers were caught; it now sits at 14–25 ms, with a test pinning the internal-resolution reduction so it cannot regress silently.
 
 Not machine-verifiable, and honestly so: whether the pinch threshold suits *your* hand at *your* distance, whether the Alt-Tab hold feels right, and how accurate the gaze model is for your eyes — the distance estimate is monocular (±15%) and the FoV comes from a table. Those are `--tune` values and `eye_corner_mm` / `camera_fov_deg` overrides, and calibrations are the point of `calibrate.bat` and `calibrate_gaze.bat`.
 

@@ -135,6 +135,17 @@ DEFAULTS: Dict[str, Any] = {
     "vcam_show_landmarks": True,
     "vcam_show_hud": True,
 
+    # --- gaze overlay look (see gazevis.py) ---
+    "vcam_style": "comet",             # pointer|comet|path|heatmap|heatmap_comet|none
+    "vcam_theme": "ember",             # ember|cyan|violet|lime|ice
+    "vcam_trail_decay": 0.86,          # buffer multiplier per frame: higher = longer trail
+    "vcam_tail_points": 48,            # how many samples the plotted path keeps
+    "vcam_glow": 1.15,                 # bloom strength; 0 disables the blur pass
+    "vcam_heat_radius": 26,            # heatmap stamp radius in canvas pixels
+    "vcam_heat_gain": 1.35,            # heatmap contrast
+    "vcam_visual_scale": 3,            # render layers at 1/N resolution, upscale on composite
+                                       # (1 = full quality and full cost; 3 = ~12x cheaper)
+
     # --- aim ---
     "aim_enabled": True,
     "aim_hysteresis_deg": 7.0,         # must beat the current monitor by this margin

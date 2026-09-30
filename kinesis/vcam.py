@@ -23,23 +23,18 @@ from typing import List, Optional, Sequence, Tuple
 import cv2
 import numpy as np
 
+from .geometry import gaze_to_canvas
+from .gazevis import GazeVisualizer, text as draw_text
 from .pose import HandPose
 from .winapi import virtual_screen
 
 CHROMA_GREEN = (0, 255, 0)
 RIGHT_COLOR = (0, 255, 0)
 LEFT_COLOR = (0, 190, 255)
-GAZE_COLOR = (0, 0, 255)
 TEXT_COLOR = (240, 240, 240)
 FONT = cv2.FONT_HERSHEY_SIMPLEX
-
-
-def gaze_to_canvas(gaze_x: float, gaze_y: float, canvas_w: int, canvas_h: int) -> Tuple[float, float]:
-    """Virtual-desktop coordinates -> canvas coordinates, stretched proportionally so the whole
-    desktop fits the canvas (position encodes which screen you are looking at)."""
-    left, top, vw, vh = virtual_screen()
-    return ((gaze_x - left) / max(vw, 1) * canvas_w,
-            (gaze_y - top) / max(vh, 1) * canvas_h)
+# gaze_to_canvas lives in geometry.py (the visualiser needs it too, and importing it from here would
+# be circular); it is re-exported above via `from .geometry import gaze_to_canvas`.
 
 
 class VirtualCamera:
@@ -64,6 +59,9 @@ class VirtualCamera:
             # overlay is a screen map, not a camera frame: the canvas is the overlay size, and it
             # must be known before start() so composite() is correct on its own
             self._w, self._h = (int(x) for x in cfg["vcam_overlay_size"])
+        from .gazevis import GazeVisualizer
+        self.visual = (None if str(cfg["vcam_style"]).lower() == "none"
+                       else GazeVisualizer(cfg, self._w, self._h, to_canvas=gaze_to_canvas))
         self._fps = float(cfg["vcam_fps"])
         self._last_compose_ms = 0.0
         self._own_green = None
@@ -162,8 +160,9 @@ class VirtualCamera:
 
         if bool(self.cfg["vcam_show_landmarks"]):
             self._draw_hands(canvas, poses)
-        if gaze is not None and getattr(gaze, "valid", False):
-            self._draw_gaze(canvas, gaze)
+        if self.visual is not None:
+            self.visual.advance(gaze)      # decay + record this frame's gaze sample
+            self.visual.draw(canvas)       # trails, heat, reticle, bloom
         if bool(self.cfg["vcam_show_hud"]) and lines:
             self._draw_hud(canvas, lines)
         self._last_compose_ms = (time.perf_counter() - t0) * 1000.0
@@ -192,27 +191,16 @@ class VirtualCamera:
                 cv2.putText(canvas, pose.describe().split()[0], (pts[0][0] - 20, pts[0][1] + 24),
                             FONT, 0.6, colour, 2, cv2.LINE_AA)
 
-    def _draw_gaze(self, canvas, gaze) -> None:
-        h, w = canvas.shape[:2]
-        gx, gy = gaze_to_canvas(gaze.x, gaze.y, w, h)
-        colour = GAZE_COLOR if gaze.age < 0.25 else (0, 0, 140)      # dim when stale
-        if self.mode == "overlay":
-            try:
-                from eyetrax.utils.draw import draw_cursor
-                draw_cursor(canvas, int(gx), int(gy), alpha=1.0, radius_outer=18,
-                            radius_inner=6, color_outer=colour, color_inner=(255, 255, 255))
-            except Exception:
-                cv2.circle(canvas, (int(gx), int(gy)), 18, colour, -1, cv2.LINE_AA)
-        else:
-            cv2.circle(canvas, (int(gx), int(gy)), 16, colour, 2, cv2.LINE_AA)
-            cv2.line(canvas, (int(gx) - 24, int(gy)), (int(gx) + 24, int(gy)), colour, 1, cv2.LINE_AA)
-            cv2.line(canvas, (int(gx), int(gy) - 24), (int(gx), int(gy) + 24), colour, 1, cv2.LINE_AA)
-
     def _draw_hud(self, canvas, lines: Sequence[str]) -> None:
-        y = 22
-        for line in lines[:6]:
-            cv2.putText(canvas, str(line)[:70], (10, y), FONT, 0.55, TEXT_COLOR, 1, cv2.LINE_AA)
-            y += 20
+        """Telemetry with a real font and a soft glow, sized to the canvas."""
+        h, _w = canvas.shape[:2]
+        size = max(13, int(h * 0.030))
+        pad = int(h * 0.022)
+        y = pad
+        for line in list(lines)[:6]:
+            draw_text(canvas, str(line)[:80], (pad, y), size=size,
+                      rgb=(238, 240, 244), glow_rgb=(255, 150, 40), glow=max(4, size // 4))
+            y += int(size * 1.30)
 
     @property
     def size(self) -> Tuple[int, int]:

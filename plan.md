@@ -346,7 +346,82 @@ Status is only ticked when the phase is implemented *and* its tests pass.
 - [x] **P12 — Gaze scrolling.** Edge-dwell scrolling with cursor warp, plus gaze-targeted
   hand scroll.
 
-## 8. Verification
+## 8. Research: what to borrow next
+
+Surveyed GitHub and the current literature for things that would extend or harden Kinesis. Rated by
+impact per unit of risk, separated into what shipped in this pass and what is proposed.
+
+### Shipped in this pass — the gaze overlay (v1.2.0)
+
+The overlay was a red dot and a crosshair drawn with OpenCV's Hershey fonts. It is now an
+accumulation-buffer renderer (`kinesis/gazevis.py`): decay a float layer, stamp the frame's
+contribution, blur the layer into itself for bloom, composite additively. That one trick gives
+trails, phosphor persistence and glow together. Styles: `pointer`, `comet`, `path` (gaze-plot
+polyline), `heatmap` (dwell density through a colormap), `heatmap_comet`, `none`. Five themes, real
+TTF text through Pillow with cached tiles, and `--vcam-demo` to drive a synthetic gaze path through
+the virtual camera so the styles can be looked at without a face in frame.
+
+Measured cost per composed 1080p frame (on the virtual-camera sender thread, so it never touches
+hand latency): pointer 14 ms, comet 15 ms, path 15 ms, heatmap 21 ms, heatmap_comet 25 ms, none
+5.5 ms. The first cut cost 59-140 ms because the float layers were full resolution — ~74 MB of
+temporaries per frame. Rendering at 1/3 and upscaling once fixed it, and a test pins that reduction.
+
+### Proposed, highest value first
+
+**1. Appearance-based gaze angles + the geometry (9/10 impact, high effort).**
+The gaze model is the weakest link: EyeTrax fits a per-user regression from landmark features to
+*screen pixels*, and a pixel regression calibrated mostly on the primary screen extrapolates badly
+across 276 cm of display. The literature solves this with models that output gaze *angles*:
+[L2CS-Net](https://github.com/Ahmednull/L2CS-Net) (3.92° on MPIIGaze),
+[MobileGaze](https://github.com/yakhyo/gaze-estimation) (ONNX weights; MobileOne-S0 4.8 MB @ 12.58°
+MAE, ResNet-34 11.33°) and [MobGazeNet](https://github.com/Ahmednull/MobGazeNet) (3.88°).
+Because v1.1.0 already computes each screen's angular span from real sizes, an angle-based model
+becomes "which angular span does this gaze fall in" instead of a pixel fit — which is exactly the
+multi-monitor problem. Needs onnxruntime, a face-crop path, and a calibration that fits a small
+per-user angular bias. This is the single biggest quality win available.
+
+**2. Watchdog for held keys (8/10 impact, low effort).**
+Release logic currently rides on the main loop. If the loop stalls — GPU contention, a slow
+callback — held keys stay down. A watchdog thread that force-releases everything after ~1 s of no
+loop heartbeat removes the only genuinely dangerous failure mode.
+
+**3. Gesture cross-check (7/10 impact, low effort).**
+MediaPipe 0.10.20 ships the Tasks `GestureRecognizer` (7 discrete classes with confidence; ~8 MB
+model). Not a replacement for the joint-angle classifier, but a second opinion that can gate the
+destructive gestures: if it disagrees about fist-vs-open, suppress the action rather than guess.
+
+**4. Hand-distance-aware pointing (7/10 impact, low effort).**
+The aim triangulation assumes a fixed hand distance. The hand's apparent size gives its distance the
+same way the eye-corner span gives the seat distance, so the pointing triangle can be exact.
+
+**5. Packaging (7/10 impact, medium effort).**
+PyInstaller one-file build plus a Start Menu launcher, matching how every other tool on this machine
+starts. Removes "install Python, a venv and six packages" from the setup path.
+
+**6. Per-app gesture profiles (6/10 impact, low effort).**
+Gesture behaviour keyed to the foreground process — no tab swipes in Explorer, no pinch-clicks in
+games — as config, no new concepts.
+
+**7. Fixation visualisation (6/10 impact, low effort).**
+Cluster recent gaze into fixations and draw numbered dwell markers with saccade links — the standard
+eye-tracking research look, and a genuine calibration diagnostic: if the numbered fixations do not
+land inside the screen you were reading, the model is off.
+
+**8. Camera resilience (5/10 impact, low effort).**
+Reopen the capture device on drop and notice when the display layout changes mid-session.
+
+**9. Two-hand gestures beyond Alt-Tab (5/10 impact, medium effort).**
+Pinch-to-zoom with both hands, rotate, two-hand drag. Diminishing returns: the vocabulary is already
+large, and each addition costs conflict surface.
+
+### Deliberately not adopted
+
+- `cvzone` (1.3k★) wraps MediaPipe for convenience; it would add a dependency for drawing helpers
+  Kinesis already owns.
+- The gaze-heatmap repos found (GazeRecorder, opticmap) are web-session recording tools, not
+  overlay renderers; the useful part is the visualisation idea, which is implemented here.
+
+## 9. Verification
 
 Machine-verified, with the evidence:
 

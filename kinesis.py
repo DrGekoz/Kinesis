@@ -51,6 +51,16 @@ def build_parser() -> argparse.ArgumentParser:
                    help="override any setting from kinesis_config.json (repeatable)")
     p.add_argument("--save-config", action="store_true", help="save the tuned config to disk")
     p.add_argument("--list-monitors", action="store_true", help="print monitor layout and exit")
+    p.add_argument("--vcam-style", default=argparse.SUPPRESS,
+                   choices=["pointer", "comet", "path", "heatmap", "heatmap_comet", "none"],
+                   help="gaze overlay look (see the Overlay styles section of the README)")
+    p.add_argument("--vcam-theme", default=argparse.SUPPRESS,
+                   choices=["ember", "cyan", "violet", "lime", "ice"],
+                   help="overlay colour theme")
+    p.add_argument("--vcam-demo", action="store_true",
+                   help="drive the overlay with a synthetic gaze path so you can see the styles")
+    p.add_argument("--vcam-demo-seconds", type=float, default=20.0,
+                   help="how long --vcam-demo runs for")
     p.add_argument("--desk-report", action="store_true",
                    help="print the physical desk: screens, sizes, camera FoV, seat distance")
     p.add_argument("--check", action="store_true", help="environment self-test and exit")
@@ -72,6 +82,12 @@ def apply_args(args, cfg: Config) -> Config:
         cfg.set("gaze_model_path", args.gaze_model)
     if args.gaze_scroll:
         cfg.set("gaze_scroll_mode", args.gaze_scroll)
+    style = getattr(args, "vcam_style", None)
+    if style:
+        cfg.set("vcam_style", style)
+    theme = getattr(args, "vcam_theme", None)
+    if theme:
+        cfg.set("vcam_theme", theme)
     if args.no_vcam:
         cfg.set("vcam_enabled", False)
     if args.vcam:
@@ -138,6 +154,57 @@ def cmd_vcam_test(cfg: Config) -> int:
         print(f"[FAIL] threaded send path: sent={cam.sent - before} error={cam.error}")
         return 1
     print("open OBS (or any app) and select 'OBS Virtual Camera' to see it")
+    return 0
+
+
+def cmd_vcam_demo(cfg: Config, seconds: float = 20.0) -> int:
+    """Drive the overlay with a synthetic gaze path and send it to the virtual camera.
+
+    Without this you cannot see the overlay styles without a face in frame; with it you can open any
+    app that takes a camera, pick "OBS Virtual Camera", and watch each style.
+    """
+    import math
+    from types import SimpleNamespace
+
+    from kinesis import winapi as w
+    from kinesis.vcam import VirtualCamera
+
+    vcam = VirtualCamera(cfg, dry=False)
+    if not vcam.enabled:
+        print("virtual camera is off (vcam_enabled / vcam_mode)")
+        return 1
+    if not vcam.start(fps=float(cfg["vcam_fps"])):
+        print(f"virtual camera failed: {vcam.error}")
+        return 1
+    print(f"virtual camera: {vcam.device_info()} at {vcam.size[0]}x{vcam.size[1]}")
+    print(f"style: {vcam.visual.status() if vcam.visual else 'none'}")
+    print(f"running {seconds:.0f}s - select 'OBS Virtual Camera' in OBS, Discord or the Camera app")
+    left, top, vw, vh = w.virtual_screen()
+    monitors = w.enumerate_monitors()
+    t0 = time.perf_counter()
+    try:
+        while time.perf_counter() - t0 < seconds:
+            t = time.perf_counter() - t0
+            fx = 0.5 + 0.40 * math.sin(t * 0.9) * math.cos(t * 0.23)
+            fy = 0.5 + 0.33 * math.sin(t * 1.7)
+            gx, gy = left + fx * vw, top + fy * vh
+            gaze = SimpleNamespace(x=gx, y=gy, valid=True, age=0.0)
+            mon = w.monitor_at(int(gx), int(gy), monitors)
+            label = f"monitor {monitors.index(mon) + 1}" if mon in monitors else "between screens"
+            lines = [
+                "Kinesis - overlay demo",
+                f"style {vcam.visual.style}  theme {vcam.visual.theme_name}" if vcam.visual else "off",
+                f"gaze {int(gx)},{int(gy)}  {label}",
+                f"seat {float(cfg['assumed_distance_mm']):.0f} mm  target: Chrome",
+            ]
+            out = vcam.composite(None, poses=(), gaze=gaze, lines=lines)
+            if out is not None:
+                vcam.publish_direct(out)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        vcam.stop()
+    print(f"demo done ({vcam.sent} frames sent)")
     return 0
 
 
@@ -292,6 +359,9 @@ def main(argv=None) -> int:
 
     if args.vcam_test:
         return cmd_vcam_test(cfg)
+
+    if args.vcam_demo:
+        return cmd_vcam_demo(cfg, args.vcam_demo_seconds)
 
     if args.save_config:
         cfg.save()
