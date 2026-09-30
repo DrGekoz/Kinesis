@@ -5,6 +5,61 @@ All notable changes to Kinesis. The README stays compact on purpose: this is whe
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are
 [semantic](https://semver.org/spec/v2.0.0.html).
 
+## [1.13.1] — a window action with no gaze target now does nothing
+
+### The bug
+
+1.13.0 removed the close-flick and made the claw require a gaze target, and alt-tab stopped
+minimising windows — but a *second* path was still live, underneath it:
+
+```python
+# kinesis/actions.py - resolve_target()
+if intent.target_hwnd and self._usable(...):  # gaze hit
+    ...
+if intent.monitor is not None:               # aimed monitor
+    ...
+hwnd = w.user32.GetForegroundWindow()        # <-- fallback: whatever has focus
+```
+
+The engine had already stopped emitting the intent when there was no gaze target, but the
+**action layer** was the thing that actually called `minimise()`. Any window intent that arrived
+without a resolved target silently became "minimise whatever is focused". So a claw performed
+while your eyes were off in empty space still closed a window, and anything routed through the map
+layer could do the same.
+
+Two independent contributors, and the second one is the reason this could look like "it still
+minimises no matter what I do":
+
+1. **The foreground fallback in `resolve_target()`.** Correct for keys and clicks — those genuinely
+   want the focused window — and wrong for minimise/maximise, which destroy something the user
+   never pointed at.
+2. **The monitor fallback**, which fires *before* the foreground one: a claw with no gaze target but
+   a valid aim monitor resolved to the topmost window on that screen.
+
+### The fix
+
+`Intent.window_only` — "there is no acceptable fallback; resolve to None rather than guess". Set on
+every destructive window action at the point of emission:
+
+- `Intent("window.minimise" / "window.maximise", ...)` from the claw drag — `gestures.py`
+- the same two, from a Gesture-Map's `system` action — `map_action_intents()`
+
+`resolve_target()` then skips **both** the monitor and foreground fallbacks. Non-window intents are
+untouched, so `keys.tap`, clicks and wheel events still target the focused window as they always
+have.
+
+Both emitters are now the only two in the codebase, and both carry the flag — checked by grep, not
+by memory.
+
+### Tests
+
+`tools/verify_actions.py` grew five live checks (21 total, was 16) that assert the fallback is
+*dead*, not merely unused: with a real window focused and a monitor to aim at, a `window_only`
+intent still resolves to `None`, while a `keys.tap` still resolves normally. A test that only
+checked the happy path would have passed against the old code.
+
+273 unit tests unchanged — this was a live-layer bug, which is exactly why it needs the live tool.
+
 ## [1.13.0] — the close-flick is gone; minimise is a claw drag
 
 ### What changed

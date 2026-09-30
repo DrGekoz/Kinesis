@@ -154,18 +154,25 @@ class ActionRunner:
 
     def resolve_target(self, intent: Intent) -> Optional[WindowInfo]:
         """The window an action applies to: the gaze-resolved window first (that is the point of
-        the eye tracking), then the monitor the hand was pointing at, then whatever has focus."""
+        the eye tracking), then the monitor the hand was pointing at, then whatever has focus.
+
+        `window_only` drops the foreground fallback entirely. A window action that cannot find the
+        window you are LOOKING at must do nothing at all - falling back to "whatever has focus" is
+        how a gesture aimed at the browser behind you quietly closes the window you were typing in.
+        """
         if intent.target_hwnd and self._usable(intent.target_hwnd):
             info = w.window_info(intent.target_hwnd, self.monitors)
             if info is not None and info.process_id not in self._skip_pids:
                 return info
-        if intent.monitor is not None:
+        if intent.monitor is not None and not intent.window_only:
             hwnd = w.topmost_window_on_monitor(intent.monitor, self.monitors, self._skip_pids,
                                                self.cfg.get("window_title_blocklist") or ())
             if hwnd:
                 info = w.window_info(hwnd, self.monitors)
                 if info is not None:
                     return info
+        if intent.window_only:
+            return None
         hwnd = w.user32.GetForegroundWindow()
         if not hwnd:
             return None

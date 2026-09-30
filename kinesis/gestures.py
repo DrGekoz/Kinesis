@@ -31,6 +31,11 @@ class Intent:
     monitor: Optional[int] = None
     target_hwnd: Optional[int] = None      # window resolved from gaze (or aim); None = foreground
     focus_hwnd: Optional[int] = None       # focus this first (keyboard needs a focused window)
+    # True when there is no acceptable fallback: resolve_target must return None rather than
+    # guessing at the foreground window. Set by every destructive window action (minimise,
+    # maximise, fullscreen) so a gesture with no gaze target does nothing instead of hitting
+    # whatever happened to be focused.
+    window_only: bool = False
     warp: Optional[tuple] = None           # move the pointer here, wait, then act (gaze tab click)
     x: float = 0.0
     y: float = 0.0
@@ -384,7 +389,7 @@ class GestureEngine:
                     else:
                         out.append(Intent("window.minimise" if going_down else "window.maximise",
                                           monitor=aim_index, target_hwnd=target_hwnd,
-                                          note="claw drag"))
+                                          window_only=True, note="claw drag"))
                         self._claw_fired = True
                         self._take_lock("claw", now)
                         self.last_note = ("claw drag -> "
@@ -937,9 +942,9 @@ def map_action_intents(action, target_hwnd, note: str = "") -> List["Intent"]:
     if kind == "system":
         value = action.value
         if value == "minimise":
-            return [Intent("window.minimise", target_hwnd=target_hwnd, note=note)]
+            return [Intent("window.minimise", target_hwnd=target_hwnd, window_only=True, note=note)]
         if value == "maximise":
-            return [Intent("window.maximise", target_hwnd=target_hwnd, note=note)]
+            return [Intent("window.maximise", target_hwnd=target_hwnd, window_only=True, note=note)]
         combos = {"fullscreen": ("f11",), "alt_tab": ("alt", "tab"),
                   "ctrl_tab_next": ("ctrl", "tab"), "ctrl_tab_prev": ("ctrl", "shift", "tab")}
         if value in combos:

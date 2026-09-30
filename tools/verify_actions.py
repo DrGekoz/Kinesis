@@ -157,6 +157,30 @@ def main() -> int:
     check("partial wheel deltas accumulate into one click",
           any("scroll 1 click" in line for line in runner2.log))
 
+    # ------------------------------------------------- no gaze target must not touch anything
+    # The regression that made alt-tab feel broken: a window action with no gaze target fell back
+    # to GetForegroundWindow(), so it minimised whatever you happened to be typing in. These two
+    # must find NOTHING even with a window actually focused and a monitor to aim at.
+    focused = ActionRunner(cfg, monitors, dry=True)
+    fg = w.user32.GetForegroundWindow()
+    check("there is a foreground window to be dangerous with", bool(fg))
+    check("window_only with no gaze target resolves to nothing",
+          focused.resolve_target(Intent("window.minimise", monitor=0, window_only=True)) is None)
+    check("window_only refuses the foreground fallback even with a monitor",
+          focused.resolve_target(Intent("window.maximise", monitor=0, window_only=True,
+                                         target_hwnd=None)) is None)
+    check("a non-window intent still falls back to focus (keys must work)",
+          focused.resolve_target(Intent("keys.tap", keys=("ctrl", "tab"))) is not None)
+
+    # and the claw path must reach the action layer with the flag set
+    from kinesis.gestures import map_action_intents
+    mapped = map_action_intents(
+        __import__("kinesis.gesture_map", fromlist=["Action"]).Action(kind="system",
+                                                                     value="minimise"),
+        None, note="test")
+    check("a map-bound minimise is window_only too",
+          bool(mapped) and all(i.window_only for i in mapped if i.kind.startswith("window.")))
+
     print()
     print(f"{sum(results)}/{len(results)} live action checks passed")
     return 0 if all(results) else 1

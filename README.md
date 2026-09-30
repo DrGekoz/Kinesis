@@ -51,13 +51,13 @@ Built for desks with several monitors, not one. Your eyes track what you are foc
 | Both hands index-thumb pinch, apart | Zoom in (`Ctrl+=`) — travel earns the steps, so a small move is a small zoom |
 | Both hands index-thumb pinch, together | Zoom out (`Ctrl+-`) |
 | Right fist held + left middle pinch | Previous browser tab (`Ctrl+Shift+Tab`) |
-| Claw (all four fingertips on the thumb), dragged **down** | Minimise the target window (exiting fullscreen first) |
+| Claw (all four fingertips on the thumb), dragged **down** | Minimise the window you are looking at (exiting fullscreen first). **Does nothing if your eyes are not on a window** — it never guesses at whatever has focus |
 | Claw, dragged **up** | Maximise; if maximised, fullscreen (`f` on YouTube, `F11` elsewhere) |
 | Thumb + pinky out, other three curled | Hold `Ctrl+Space` — push-to-talk dictation |
 | **Left** fist held 2 s | Opens Alt-Tab and holds `Alt`; each right-hand pinch taps `Tab`; opening the left fist commits |
 | `END` | Quit, releasing everything |
 
-Window actions are aimed: the claw drags the window you were looking at, and if your eyes are not on a window at all it does nothing rather than acting on whatever happens to have focus.
+Window actions are aimed: the claw acts on the window you were **looking at**. There is no fallback — no gaze target means no minimise, ever, because guessing at the focused window is how a gesture you meant for the browser behind you closes the app you were typing in. Keys, clicks and the wheel still go to the focused window as normal.
 
 ## Quick start
 
@@ -348,7 +348,7 @@ Everything lives in `kinesis_config.json` and every key can be overridden live w
 
 ```bat
 .venv\Scripts\python -m pytest tests -q       273 passed
-.venv\Scripts\python tools\verify_actions.py  16/16 live OS checks
+.venv\Scripts\python tools\verify_actions.py  21/21 live OS checks
 .venv\Scripts\python tools\verify_overlay.py  12/12 against the real compositor
 .venv\Scripts\python tools\check_tabs.py      tab-strip detection against your open browsers
 .venv\Scripts\python -u tools/check_gaze.py   live gaze pipeline: camera, face, features, model
