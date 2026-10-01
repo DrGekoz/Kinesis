@@ -38,11 +38,25 @@ class StubCamera:
         self._stop = threading.Event()
         self._alive = False
         self.actual_size = (width, height)
+        self.error = None
+        # flipped by the tests that exercise the "opened but no frames" failure
+        self.frames_arriving = True
         StubCamera.instances.append(self)
 
     def open(self) -> bool:
         self.opened = True
         return True
+
+    def verify_streaming(self, seconds: float = 3.0) -> bool:
+        # Mirrors the real contract: on failure it SETS self.error, because that message is the
+        # only thing the user sees. A stub that returned False silently would let the test pass
+        # while the app printed nothing - which is the bug this whole check exists to prevent.
+        if self.frames_arriving:
+            self.error = None
+            return True
+        self.error = (f"camera {self.index} ({self.backend}) opened but delivered NO frames - "
+                      f"another program is holding the webcam.")
+        return False
 
     def start(self):
         self._stop.clear()          # what the real one cannot do - the point of the fix
@@ -132,6 +146,30 @@ def test_start_is_idempotent_while_already_running(engine):
     before = len(StubCamera.instances)
     assert engine.start() is True
     assert len(StubCamera.instances) == before, "a second camera was opened while already running"
+
+
+def test_a_camera_that_opens_but_delivers_nothing_stops_the_engine(monkeypatch):
+    """The real-world failure: VRChat held the C920, `isOpened()` said True, frames were zero.
+
+    Before this, the app started normally with nothing to track - camera "open", loop spinning,
+    HUD drawing - and every status line implied eye tracking was live. `start()` must now
+    refuse, so the user gets a sentence about the camera instead of a mystery.
+    """
+    monkeypatch.setattr(tracking, "CameraThread", StubCamera)
+    monkeypatch.setattr(tracking, "InferenceThread", StubInference)
+    engine = tracking.TrackingEngine(Config())
+
+    real_init = StubCamera.__init__
+
+    def silent_camera(*a, **kw):
+        real_init(*a, **kw)
+        StubCamera.instances[-1].frames_arriving = False   # opens, then delivers nothing
+
+    monkeypatch.setattr(StubCamera, "__init__", silent_camera)
+    assert engine.start() is False, "the engine started on a camera that never produces frames"
+    assert "NO frames" in (engine.camera.error or ""), \
+        f"the error must name the real problem, got: {engine.camera.error!r}"
+    assert engine.inference is None, "the inference thread must not start without frames"
 
 
 def test_a_real_camera_survives_a_stop_start_cycle():

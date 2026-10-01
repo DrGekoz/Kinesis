@@ -45,9 +45,11 @@ class FakeEngine:
 
 
 class FakeGaze:
-    def __init__(self, model_exists: bool = True):
-        self.model_path = Path("gaze_model.pkl")
-        self._exists = model_exists
+    def __init__(self, engine=None, model_path: Path | None = None):
+        # the path comes from the test, never from a literal, so a fixture can never point
+        # at the project's real gaze_model.pkl
+        self.model_path = model_path if model_path is not None else Path("gaze_model.pkl")
+        self._exists = model_path.exists() if model_path is not None else True
 
     def exists(self):                                          # pragma: no cover - unused
         return self._exists
@@ -60,7 +62,7 @@ class FakeGaze:
 
 
 @pytest.fixture
-def wizard(monkeypatch):
+def wizard(monkeypatch, tmp_path):
     """Answer the prompt with `answer`, and capture whether the camera was free at wizard time."""
     def run(answer: str, engine, model_exists: bool = True, rc: int = 0):
         calls = {"order": [], "camera_free": None}
@@ -76,16 +78,21 @@ def wizard(monkeypatch):
             return rc
 
         monkeypatch.setattr(app.subprocess, "call", fake_call)
-        # a temp model file so the "did it produce a model" check can be satisfied
-        model = Path("gaze_model.pkl")
-        existed = model.exists()
+        # a temp model file so the "did it produce a model" check can be satisfied.
+        #
+        # THIS MUST BE IN tmp_path. An earlier version used the RELATIVE path
+        # `gaze_model.pkl` and restored only when the file had not already existed
+        # (`if model_exists and not existed: unlink`) - so running the suite against a
+        # real, calibrated project left the one-byte stub "x" sitting in
+        # gaze_model.pkl in place of the trained model. Every later gaze.start() then
+        # died with "invalid load key, 'x'" and the main loop measured nothing, while
+        # `is_calibrated` (a bare .exists()) reported True. A unit test must never be
+        # able to write to a real model file: a relative path plus a conditional
+        # cleanup is a data-destroying combination, not a fixture.
+        model = tmp_path / "gaze_model.pkl"
         if model_exists:
             model.write_text("x", encoding="utf-8")
-        try:
-            result = app._maybe_calibrate({}, FakeGaze(), engine)
-        finally:
-            if model_exists and not existed:
-                model.unlink(missing_ok=True)
+        result = app._maybe_calibrate({}, FakeGaze(engine, model), engine)
         return result, calls
 
     return run

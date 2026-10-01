@@ -5,6 +5,96 @@ All notable changes to Kinesis. The README stays compact on purpose: this is whe
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are
 [semantic](https://semver.org/spec/v2.0.0.html).
 
+## [1.19.0] — eye gaze and hand tracking, running at the same time
+
+**The report:** after calibration the app asked the user to run `run.bat` instead of doing it
+itself, eye-gaze "started", and it still never measured eye-gaze in the main loop.
+
+Four independent faults, all reporting success while producing nothing.
+
+### Fault 1: hand tracking permanently breaks eye tracking (the real one)
+
+`mp.solutions.hands.Hands()` — MediaPipe's legacy *solutions* API, used for hands — **permanently
+breaks the modern `tasks` API's file loader in the same process.** Every `FaceLandmarker` created
+afterwards resolves an absolute path as if it were relative:
+
+```
+Unable to open file at F:\...\Kinesis\.venv\Lib\site-packages/C:/Users/josep/.cache/eyetrax/
+mediapipe/face_landmarker.task, errno=22
+```
+
+Measured, not inferred. It survives `Hands.close()`, `os.chdir`, a new thread, and every path
+spelling — POSIX, native backslash, `file://` URI, relative, and a copy beside the app. Only
+`BaseOptions(model_asset_buffer=<bytes>)` is unaffected, because it never asks the broken loader to
+resolve anything.
+
+`vendor/eyetrax/src/eyetrax/gaze.py` now reads the task file itself and passes the **bytes**. This
+is what allows eye gaze and hand tracking to share one process at all.
+
+### Fault 2: a unit test destroyed the trained model
+
+`tests/test_inapp_calibration.py` wrote its stub to the **relative** path `gaze_model.pkl`, and
+cleaned up only `if model_exists and not existed`. On a calibrated project the file already existed,
+so a 1-byte stub containing `x` was left in place of the trained model — hence
+`invalid load key, 'x'`. The fixture now uses `tmp_path`, and `FakeGaze` takes the path from the
+test rather than hard-coding it. The 222 saved samples in `gaze_model.npz` survived, so the model
+was recovered without recalibrating.
+
+### Fault 3: `is_calibrated` was a bare `.exists()`
+
+A 1-byte file exists, so the app claimed a model was loaded, skipped the calibration wizard, and
+then failed at startup. It now **unpickles** the file (memoised; invalidated by `train()`,
+`stop()` and `set_model_path()`), and a corrupt model is named as such.
+
+A magic-byte check was tried and rejected: a 4-byte truncated pickle (`\x80\x04\x95\x01`) passes
+any byte test and still raises on unpickling. The real load is the only check that matches what
+`start()` will do.
+
+### Fault 4: a camera held by another program reported as open
+
+With VRChat running, the C920 was healthy and `isOpened()` returned `True` with a plausible
+`640x480` — while every `read()` returned `(False, None)`. ffmpeg confirmed
+`Could not run graph (sometimes caused by a device already in use by other application)`.
+
+`CameraThread.verify_streaming()` now reads real frames **before** the capture thread starts, and
+`TrackingEngine.start()` refuses rather than running with nothing to track.
+
+### The app now proves it works instead of assuming it
+
+- `_verify_gaze_live()` measures gaze on the live camera at startup:
+  `[gaze] measured on the live camera: 41 frames with a face, 12 valid points`. Previously
+  `gaze.start()` returning `True` only ever meant "a model loaded", which was true in all four
+  faults above.
+- `_gaze_faulted()` reports **once** when the eyes stop driving the pointer, and once when they
+  resume. This matters because `cursor_fallback: hand` makes a gaze failure look exactly like a
+  miscalibrated gaze.
+
+### New tools
+
+- `tools/probe_live_loop.py` — drives the real main-loop objects in the real order and prints a
+  line per second (`gazeRuns`, `faces`, `miss`, `valid`, point, `cursor.move` count), so you can
+  see which stage goes quiet. `--move-cursor` actually drives the pointer.
+- `tools/retrain_gaze_model.py` — re-fits the model from the samples in `gaze_model.npz` with no
+  new calibration, re-using the alpha the wizard chose, backing up any existing model, verifying
+  the result loads through the real `GazeEstimator`, and printing the same leave-one-dot-out score
+  the wizard reports.
+
+The model recovered for this release reproduced the wizard's own numbers (held-out median 366 px
+vs the 365.6 px it had recorded), so it is the same model rather than a different one.
+
+### Tests
+
+`tests/test_gaze_silent_failures.py` pins all four faults, including the negative case that a
+genuine pickle must still load and a guard that no test can name the project's real model file by a
+relative path. **376 passing, 1 skipped** (the live-camera stop/start test skips when the webcam is
+busy).
+
+### Known limitation
+
+`gaze_model.pkl` is gitignored per-machine state, so a fresh clone still needs one calibration run.
+The 93% held-out monitor hit rate on a 4-screen desk is unchanged — this version makes the number
+*reachable*, not better.
+
 ## [1.18.1] — the app no longer exits after calibrating
 
 **I shipped this in v1.17.0.** The camera handoff worked — the calibration ran and produced a

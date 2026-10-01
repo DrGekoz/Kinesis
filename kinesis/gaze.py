@@ -12,6 +12,7 @@ the mirrored frame is never fed here.
 """
 from __future__ import annotations
 
+import pickle
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -86,6 +87,10 @@ class GazeEngine:
         self._tap = None
         self._camera = None
         self._span_ema = 0.0
+        # is_calibrated unpickles the model, so the verdict is memoised. Cleared by
+        # set_model_path(), by train() and by stop()-then-start(), so a freshly written model
+        # is never reported as the old (or a stale True) answer.
+        self._loadable_cache = False
         self.error: Optional[str] = None
         # stats
         self.frames = 0
@@ -95,15 +100,63 @@ class GazeEngine:
         self.predict_ms = 0.0
 
     # ------------------------------------------------------------------ lifecycle
+    def set_model_path(self, path) -> None:
+        """Point at a different model file and forget the memoised verdict for the old one.
+
+        Tests and the retrain tool both swap the path; without clearing the cache the first
+        verdict would be reported for every later file, which is the same class of lie as the
+        original `.exists()`.
+        """
+        self.model_path = Path(str(path))
+        if not self.model_path.is_absolute():
+            from .config import ROOT
+            self.model_path = ROOT / self.model_path
+        self._loadable_cache = False
+
     @property
     def is_calibrated(self) -> bool:
-        return self.model_path.exists()
+        """Is there a USABLE model? A file that exists but cannot be loaded is not calibrated.
+
+        This used to be a bare `.exists()`, and that turned out to be a lie that broke every
+        diagnosis downstream. A truncated or non-pickle file exists, so the app printed
+        "gaze: model gaze_model.pkl" and the calibration prompt was skipped - then
+        `start()` failed with `invalid load key, 'x'` and the main loop measured nothing while
+        every status line claimed eye tracking was live.
+
+        The check is now a REAL load, not a magic byte. A magic byte was tried first and is not
+        enough: a 4-byte truncated pickle (`\\x80\\x04\\x95\\x01` - the protocol and frame header
+        with no model in it) passes any byte check and then raises on unpickling. Unpickling the
+        file is the only test that matches what `start()` will actually do, it costs a few
+        milliseconds, and it happens once at startup.
+
+        Unpickling executes the file's opcodes, so this only ever runs against a path from the
+        user's own config on their own machine - the same trust `start()` already places in it.
+        """
+        if not self._loadable_cache:
+            try:
+                if not self.model_path.is_file():
+                    return False
+                with self.model_path.open("rb") as fh:
+                    if fh.read(1) != b"\x80":            # cheap reject first: not a pickle at all
+                        return False
+                    fh.seek(0)
+                    obj = pickle.load(fh)
+            except Exception:
+                return False
+            self._loadable_cache = bool(obj) or obj is not None
+        return self._loadable_cache
 
     def start(self) -> bool:
         if not self.enabled:
             return False
         if not self.is_calibrated:
-            self.error = (f"no gaze model at {self.model_path} - run calibrate_gaze.bat")
+            if self.model_path.exists():
+                self.error = (f"{self.model_path.name} is not a usable gaze model "
+                              f"(corrupt or not a pickle) - re-fit it with "
+                              f"tools\\retrain_gaze_model.py, or recalibrate with "
+                              f"calibrate_gaze.bat")
+            else:
+                self.error = (f"no gaze model at {self.model_path} - run calibrate_gaze.bat")
             print(f"[gaze] {self.error}")
             return False
         try:
@@ -250,6 +303,10 @@ class GazeEngine:
             except Exception:
                 pass
             self._estimator = None
+        # The calibration wizard may have replaced the model while we were not looking, so the
+        # memoised verdict is dropped here: a later start() must re-read the file rather than
+        # trust a verdict computed before the wizard ran.
+        self._loadable_cache = False
 
     # ------------------------------------------------------------------ per frame
     def update(self, frame, now: Optional[float] = None) -> GazeState:
@@ -321,6 +378,7 @@ class GazeEngine:
         y = np.array([[float(s[1]), float(s[2])] for s in samples], dtype=np.float32)
         self._estimator.train(X, y)
         self._estimator.save_model(self.model_path)
+        self._loadable_cache = False       # a new file: the old verdict is meaningless now
 
     def features_for(self, frame):
         """Raw feature extraction, for the calibration wizard."""

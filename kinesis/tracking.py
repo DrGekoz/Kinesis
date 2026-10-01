@@ -90,6 +90,42 @@ class CameraThread(threading.Thread):
         self.opened = True
         return True
 
+    def verify_streaming(self, seconds: float = 3.0) -> bool:
+        """IS A REAL FRAME FLOWING? `isOpened()` does not mean yes, and believing it is a lie.
+
+        Measured failure: with VRChat running, the C920 still enumerates, `VideoCapture`
+        still reports `isOpened() == True` and even hands back a plausible 640x480 size - and
+        then every single `read()` returns `(False, None)`. ffmpeg, a completely separate
+        stack, says "Could not run graph (sometimes caused by a device already in use by other
+        application)". A webcam is a single-client device.
+
+        The consequence of not checking this is the exact bug class this project keeps hitting:
+        the app looks alive (camera open, loop spinning, HUD drawing) while producing nothing,
+        and every status line blames the wrong layer. So the app PROVES frames arrive before
+        it claims to be running.
+
+        Must be called BEFORE the capture thread is started, because `run()` is what consumes
+        frames.
+        """
+        if not self.opened:
+            return False
+        deadline = time.perf_counter() + max(seconds, 0.1)
+        got = 0
+        while time.perf_counter() < deadline:
+            ok, frame = self._cap.read()
+            if ok and frame is not None:
+                got += 1
+                if got >= 3:
+                    self.error = ""
+                    return True
+            time.sleep(0.03)
+        self.error = (
+            f"camera {self.index} ({self.backend_name}) opened but delivered NO frames - "
+            f"another program is holding the webcam. Close it (VRChat, Discord camera, Zoom, "
+            f"OBS, Teams, the Windows Camera app) and start Kinesis again. "
+            f"Get-PnpDevice -Class Camera shows the device itself is fine.")
+        return False
+
     @property
     def actual_size(self):
         w = int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH)) if self.opened else self.width
@@ -297,6 +333,13 @@ class TrackingEngine:
                                    int(self.cfg["frame_height"]),
                                    backend=str(self.cfg["camera_backend"]))
         if not self.camera.open():
+            return False
+        # Prove frames actually arrive. `isOpened()` was reporting success on a camera another
+        # program was holding, and the app then ran happily with nothing to track - which is how
+        # "eye-gaze was allegedly started but nothing was measured" happened. A silent camera is
+        # the single most expensive failure to debug, so the app refuses to start without frames.
+        if not self.camera.verify_streaming():
+            self.camera.stop()
             return False
         self.camera.start()
         self.inference = InferenceThread(self.camera, self.cfg)

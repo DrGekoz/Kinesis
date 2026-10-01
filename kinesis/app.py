@@ -160,6 +160,7 @@ class KinesisApp:
         self._settings_armed = True
         self._open_settings_at_start = bool(cfg.get("open_settings", False))
         self._eye_cursor: Optional[tuple] = None    # smoothed eye-driven pointer position
+        self._gaze_fault = ""                      # last reported "eyes are not driving" reason
         self.hud = Hud(cfg, self.monitors)
         self.preview = bool(cfg["preview"] if preview is None else preview)
         self._stop = False
@@ -372,6 +373,9 @@ class KinesisApp:
     def run(self) -> int:
         self._install_signals()
         if not self.engine.start():
+            # camera.error now distinguishes "could not open" from "opened but a competitor is
+            # holding it" - the second one used to start the whole app with nothing to track.
+            print()
             print(f"camera error: {self.engine.camera.error}")
             return 2
         w0, h0 = self.engine.frame_size
@@ -409,6 +413,11 @@ class KinesisApp:
                           "run.bat --tune pinch_ring_action=scroll --save-config")
             print("=" * 78)
             print()
+        # "gaze started" and "gaze is measuring" are different claims, and only one of them is
+        # true when a model loads but the pipeline never produces a point. Measure it now, on the
+        # live camera, so the first thing printed is the truth.
+        if self.gaze.enabled and self.gaze.is_calibrated:
+            self._verify_gaze_live()
         print("Created by DrGekoz - report issues on GitHub:")
         print("  https://github.com/DrGekoz/Kinesis")
         print()
@@ -563,9 +572,9 @@ class KinesisApp:
         """The pointer, driven by the eyes.
 
         One place decides it: gestures._cursor_intent refuses to move the pointer while
-        `cursor_from_hand` is false, and this feeds the moves instead. Actions are unchanged - a pinch
-        still clicks, a ring pinch still drags - but they act where you are LOOKING rather than where
-        your hand is, and a drag follows your eyes.
+        `cursor_from_hand` is false, and this feeds the moves instead. Actions are unchanged - a
+        pinch still clicks, a ring pinch still drags - but they act where you are LOOKING rather
+        than where your hand is, and a drag follows your eyes.
         """
         want_gaze = str(self.cfg["cursor_source"]).lower() == "gaze"
         if not want_gaze:
@@ -577,12 +586,15 @@ class KinesisApp:
             # Never leave the mouse dead: before calibration (or while looking away) either fall back
             # to the hand, or hold the pointer exactly where it is if that is what was asked for.
             self.gestures.cursor_from_hand = str(self.cfg["cursor_fallback"]).lower() != "hold"
+            if not bool(self.gaze._estimator):
+                self._gaze_faulted("gaze is not running - the pointer is on the hand")
             return []
 
         self.gestures.cursor_from_hand = False
         x, y = float(gaze.x), float(gaze.y)
         if self._eye_cursor is None:
             self._eye_cursor = (x, y)
+            self._gaze_faulted("")
             return [Intent("cursor.move", x=int(x), y=int(y))]
 
         a = min(max(float(self.cfg["gaze_cursor_smoothing"]), 0.0), 0.98)
@@ -592,7 +604,84 @@ class KinesisApp:
         if abs(sx - self._eye_cursor[0]) < dead and abs(sy - self._eye_cursor[1]) < dead:
             return []                    # a resting eye does not shake the pointer
         self._eye_cursor = (sx, sy)
+        self._gaze_faulted("")
         return [Intent("cursor.move", x=int(sx), y=int(sy))]
+
+    def _gaze_faulted(self, why: str) -> None:
+        """Say ONCE why the eyes are not driving the pointer, then stay quiet.
+
+        The failure this exists for: `cursor_source=gaze` with a gaze engine that never measured
+        anything, so the hand silently drove the pointer and every status line still said gaze was
+        live. A user cannot debug what nothing explains, and a per-frame print is unreadable. So it
+        reports the first time, names the reason, and only clears on a good frame.
+        """
+        if not why:
+            if self._gaze_fault:
+                self._gaze_fault = ""
+                print("[gaze] the eyes are driving the pointer again")
+            return
+        if self._gaze_fault == why:
+            return
+        self._gaze_fault = why
+        print()
+        print(f"[gaze] NOT controlling the pointer: {why}")
+        if str(self.cfg["cursor_source"]).lower() == "gaze":
+            print("        cursor_source is 'gaze', so the hand is driving it instead - if that is")
+            print("        not what you want: run.bat --tune cursor_source=hand --save-config")
+        print("        diagnose it with:  .venv\\Scripts\\python tools\\check_gaze.py")
+        print()
+
+    def _verify_gaze_live(self, seconds: float = 4.0) -> bool:
+        """Measure eye gaze on the real camera BEFORE the loop claims it is running.
+
+        `gaze.start()` returning True only means a model was loaded. Every one of these reported
+        success while measuring nothing:
+          * a corrupt model file (is_calibrated was a bare .exists(), so a 1-byte stub passed),
+          * the face landmarker unable to load once the hand model existed in the process,
+          * a camera held by another program that still returned isOpened() == True.
+
+        So this drives the actual pipeline - engine.update() -> raw_frame() -> gaze.update() -
+        for a few seconds and counts real predictions. It is the difference between "gaze
+        started" and "gaze is measuring", which are not the same claim.
+        """
+        if not self.gaze.enabled or not self.gaze._estimator:
+            return False
+        end = time.perf_counter() + max(seconds, 0.5)
+        faces = predictions = 0
+        while time.perf_counter() < end:
+            now = time.perf_counter()
+            self.engine.update()
+            state = self.gaze.update(self.engine.raw_frame(), now)
+            faces = self.gaze.faces
+            if state.valid:
+                predictions += 1
+            if predictions >= 3:
+                break
+            time.sleep(0.01)
+        self.gaze.frames = 0
+        self.gaze.faces = 0
+        self.gaze.misses = 0
+        self.gaze.blinks = 0
+        if predictions:
+            print(f"[gaze] measured on the live camera: {faces} frames with a face, "
+                  f"{predictions} valid points - eye tracking is on")
+            return True
+        print()
+        print("=" * 78)
+        print(" EYE TRACKING STARTED BUT IS NOT MEASURING")
+        print("=" * 78)
+        if faces == 0:
+            print(" The model loaded and the camera is streaming, but no face was found in")
+            print(f" {seconds:.0f}s. Check: your whole face is in frame, the room is lit, and")
+            print(" nothing is in front of the lens.")
+        else:
+            print(" A face was found but no prediction came out. That means the estimator")
+            print(" produced features the model cannot use - recalibrate with calibrate_gaze.bat")
+            print(" (or re-fit from the saved samples: tools\
+etrain_gaze_model.py).")
+        print("=" * 78)
+        print()
+        return False
 
     def _open_settings(self) -> None:
         """Pause input, show the settings window, apply whatever came back.

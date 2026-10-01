@@ -6,14 +6,14 @@
 
 Control Windows with your hands through one webcam. Look at a window and it becomes the target; move your index finger and the cursor goes there. No keyboard, no mouse, no wearable.
 
-**13 gestures · gesture locking · desk geometry · multi-monitor · ~46 ms · gaze targeting · gaze tab clicks · desktop overlay · dictation into the field you look at · virtual camera · 176 tests**
+**13 gestures · gesture locking · desk geometry · multi-monitor · ~46 ms · gaze targeting · gaze tab clicks · desktop overlay · dictation into the field you look at · virtual camera · 376 tests**
 
 <a href="https://github.com/DrGekoz/Kinesis/stargazers"><img src="https://img.shields.io/github/stars/DrGekoz/Kinesis?style=for-the-badge&color=f59e0b" alt="Stars"></a>
 <a href="https://github.com/DrGekoz/Kinesis/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-MIT-22c55e?style=for-the-badge" alt="License"></a>
 <img src="https://img.shields.io/badge/platform-Windows-06b6d4?style=for-the-badge" alt="Platform">
 <img src="https://img.shields.io/badge/python-3.11-8b5cf6?style=for-the-badge" alt="Python">
 <img src="https://img.shields.io/badge/latency-~46ms-f43f5e?style=for-the-badge" alt="Latency">
-<img src="https://img.shields.io/badge/tests-267%20passing-22c55e?style=for-the-badge" alt="Tests">
+<img src="https://img.shields.io/badge/tests-376%20passing-22c55e?style=for-the-badge" alt="Tests">
 <img src="https://img.shields.io/badge/virtual%20camera-OBS-8b5cf6?style=for-the-badge" alt="Virtual camera">
 
 [Gestures](#gestures) · [Quick start](#quick-start) · [Install](#install) · [Which screens](#which-screens) · [Calibration](#calibration) · [Eyes as the pointer](#the-pointer-is-your-eyes) · [Gaze](#gaze) · [Settings](#settings) · [Overlay](#overlay) · [Dictation](#dictation) · [Config](#config) · [Troubleshooting](#troubleshooting) · [Credits](#credits)
@@ -155,8 +155,24 @@ calibrate_gaze.bat --monitors 2,3     calibrate only those screens
 Under ~85% on the held-out figure means your head moved; run it again. Skip all of this and
 everything still works — gaze falls back to hand aim, then the focused window.
 
-Not sure whether eye tracking is working at all? `tools\check_gaze.py` tests each stage in turn -
-vendored source, camera, face, landmarks, features, model, prediction - and says which one is broken.
+Not sure whether eye tracking is working at all? Two tools, and they answer different questions:
+
+| Tool | Question it answers |
+| --- | --- |
+| `tools/check_gaze.py` | Is the gaze *stack* sound? Tests each stage - vendored source, camera, face, landmarks, features, model, prediction - and names the one that is broken. |
+| `tools/probe_live_loop.py` | Is the *main loop* actually measuring? Drives the real objects in the real order and prints a line per second with `gazeRuns`, `faces`, `valid`, the point and the `cursor.move` count, so you can see which stage goes quiet. |
+| `tools/retrain_gaze_model.py` | Is the model file broken? Re-fits it from the samples the wizard already saved to `gaze_model.npz` - no new calibration needed. |
+
+`run.bat` also checks itself now. It **proves a camera frame arrives** before it starts (a webcam is
+a single-client device, and a camera another program is holding still reports `isOpened() == True`
+while delivering nothing), and it **measures eye gaze on the live camera at startup** rather than
+assuming a loaded model means a working one:
+
+```
+[gaze] measured on the live camera: 41 frames with a face, 12 valid points - eye tracking is on
+```
+
+If it cannot measure, it says so with the reason instead of quietly leaving the hand in charge.
 
 ## The pointer is your eyes
 
@@ -338,6 +354,10 @@ Everything lives in `kinesis_config.json` and every key can be overridden live w
 
 | Symptom | Fix |
 | --- | --- |
+| **Nothing tracks and the pointer still works** | The camera is being held by another program. Kinesis now refuses to start and names the culprit class - close VRChat, a Discord/Zoom camera, OBS, Teams or the Windows Camera app. `Get-PnpDevice -Class Camera` shows the device itself is fine |
+| **"EYE TRACKING STARTED BUT IS NOT MEASURING"** | The model loaded but nothing was predicted. `tools\probe_live_loop.py` shows which stage is quiet; if faces are found but no point comes out, re-fit with `tools/retrain_gaze_model.py` or recalibrate |
+| **`gaze_model.pkl is not a usable gaze model`** | The file is corrupt. Re-fit from the saved samples: `tools/retrain_gaze_model.py` - no new calibration needed |
+| **[gaze] NOT controlling the pointer** | Gaze stopped driving it and the hand took over. The reason is on that line; `--tune cursor_source=hand --save-config` makes the switch deliberate instead of silent |
 | Cursor jitters | `--tune filter_min_cutoff=1.2 deadband_px=2.5 --save-config` |
 | Cursor feels laggy | Raise `filter_beta`, or `filter: false` for raw landmarks |
 | Scrolling jumps or fights you | `scroll_smooth` up (0.6), `scroll_deadband_px` up, `scroll_gain` down |
@@ -354,7 +374,7 @@ Everything lives in `kinesis_config.json` and every key can be overridden live w
 ## Verification
 
 ```bat
-.venv\Scripts\python -m pytest tests -q       366 passed
+.venv\Scripts\python -m pytest tests -q       376 passed, 1 skipped (the live-camera one needs the webcam free)
 .venv\Scripts\python tools\verify_actions.py  21/21 live OS checks
 .venv\Scripts\python tools\verify_volume.py    10/10 volume-key checks (mixer response skipped where it cannot be read)
 node tools\marketplace_stub.mjs 8787        runs the real Worker locally against an in-memory D1
@@ -369,7 +389,7 @@ node tools\marketplace_stub.mjs 8787        runs the real Worker locally against
 check.bat                                     all of the above, in order
 ```
 
-366 tests cover every gesture, the pose classifier, the click/fist arbitration, gesture locking, the
+376 tests cover every gesture, the pose classifier, the click/fist arbitration, gesture locking, the
 Alt-Tab session, gaze targeting and focus, desk geometry against a hand-built EDID block, overlay
 rendering, and release-all safety — with landmark geometry synthesised at exact joint angles rather
 than recorded, so each classification is checked against a known-correct input.

@@ -127,7 +127,25 @@ def _create_face_landmarker(*, model_path: str | os.PathLike[str] | None):
 
     task_path = _ensure_face_landmarker_task(model_path)
     options = vision.FaceLandmarkerOptions(
-        base_options=BaseOptions(model_asset_path=str(task_path)),
+        # BYTES, NOT A PATH.
+        #
+        # Kinesis runs the legacy `mp.solutions.hands.Hands()` (hand tracking) in the same
+        # process, and constructing it PERMANENTLY breaks the modern `tasks` file loader: every
+        # later FaceLandmarker then raises
+        #
+        #   Unable to open file at <venv>/Lib/site-packages/C:/Users/.../face_landmarker.task
+        #   errno=22
+        #
+        # i.e. an absolute POSIX path gets joined onto site-packages as if it were relative.
+        # Measured, not inferred: it survives close(), it survives os.chdir(), it survives a
+        # new thread, and it survives every path spelling (posix, native backslash, file://
+        # URI, relative, absolute-nearby). Only the buffer form is unaffected, because it
+        # never asks the broken loader to resolve anything.
+        #
+        # So: read the task file ourselves and hand over the bytes. This makes the landmarker
+        # immune to whatever the legacy API did to the process, which is the only reason eye
+        # tracking and hand tracking can share a process at all.
+        base_options=BaseOptions(model_asset_buffer=task_path.read_bytes()),
         running_mode=vision.RunningMode.VIDEO,
         num_faces=1,
         min_face_detection_confidence=0.5,
