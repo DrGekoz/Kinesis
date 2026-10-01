@@ -352,9 +352,11 @@ Everything lives in `kinesis_config.json` and every key can be overridden live w
 ## Verification
 
 ```bat
-.venv\Scripts\python -m pytest tests -q       291 passed
+.venv\Scripts\python -m pytest tests -q       296 passed
 .venv\Scripts\python tools\verify_actions.py  21/21 live OS checks
 .venv\Scripts\python tools\verify_volume.py    10/10 volume-key checks (mixer response skipped where it cannot be read)
+node tools\marketplace_stub.mjs 8787        runs the real Worker locally against an in-memory D1
+.venv\Scripts\python tools\verify_marketplace.py   18/18 submit round-trip, no Cloudflare needed
 .venv\Scripts\python tools\verify_overlay.py  12/12 against the real compositor
 .venv\Scripts\python tools\check_tabs.py      tab-strip detection against your open browsers
 .venv\Scripts\python -u tools/check_gaze.py   live gaze pipeline: camera, face, features, model
@@ -364,7 +366,7 @@ Everything lives in `kinesis_config.json` and every key can be overridden live w
 check.bat                                     all of the above, in order
 ```
 
-291 tests cover every gesture, the pose classifier, the click/fist arbitration, gesture locking, the
+296 tests cover every gesture, the pose classifier, the click/fist arbitration, gesture locking, the
 Alt-Tab session, gaze targeting and focus, desk geometry against a hand-built EDID block, overlay
 rendering, and release-all safety — with landmark geometry synthesised at exact joint angles rather
 than recorded, so each classification is checked against a known-correct input.

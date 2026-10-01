@@ -22,7 +22,14 @@ const POSES = new Set([
   "open", "fist", "point", "peace", "three", "four", "pinky", "shaka",
   "pinch_index", "pinch_middle", "pinch_ring", "pinch_pinky",
 ]);
-const ACTIONS = new Set(["keys", "hold_keys", "mouse", "system", "none"]);
+// Same vocabulary the desktop app validates against, so the marketplace cannot accept a map the
+// client would then refuse to import.
+//
+// "mouse_hold" MUST be in this set. It is the real drag action, it is in the client's
+// ACTION_TYPES, and the client's own default map uses it for the drag binding - so without it here
+// the marketplace rejects Kinesis' own default map, and every user trying to submit a map with a
+// drag in it gets "unknown action type mouse_hold". Caught by tools/verify_marketplace.py.
+const ACTIONS = new Set(["keys", "hold_keys", "mouse", "mouse_hold", "system", "none"]);
 const MODIFIERS = new Set(["ctrl", "shift", "alt", "win"]);
 
 function json(body, status = 200) {

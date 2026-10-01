@@ -5,6 +5,51 @@ All notable changes to Kinesis. The README stays compact on purpose: this is whe
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are
 [semantic](https://semver.org/spec/v2.0.0.html).
 
+## [1.16.0] — the marketplace submit path is proven, and one bug it hid is fixed
+
+### The bug
+
+**The Worker rejected Kinesis' own default map.** The client's `ACTION_TYPES` includes
+`mouse_hold` (the real drag action) and the default map uses it for the drag binding — but
+`cloudflare/worker.js` had its own copy of the vocabulary, in JavaScript, in a different file, and
+`mouse_hold` was missing from it.
+
+So `POST /maps` returned 400 `unknown action type mouse_hold` for a map the client had already
+declared valid. The Submit button would have failed for **anyone** publishing a map containing a
+drag, and there was no way to see that without a live Worker — the client-side validator said clean.
+
+Two copies of one rule, in two languages, in two files, with nothing keeping them in step.
+
+### How it was found
+
+`tools/marketplace_stub.mjs` runs the **real** `cloudflare/worker.js` in Node against an in-memory
+D1 stand-in, behind a local HTTP server. `tools/verify_marketplace.py` then drives it with the
+**real** `kinesis/marketplace.py` client over the same `urllib` path production uses. Button, form,
+HTTP call, server-side validation and response handling are all exercised for real; only the
+database and the network hop are local.
+
+`tests/test_marketplace_vocabulary.py` compares the two vocabularies directly, so the drift cannot
+return. It was verified by reintroducing the bug: two of its five tests fail, and pass again once
+fixed.
+
+### Fixed
+
+- `mouse_hold` added to the Worker's `ACTIONS`, with a comment saying why it must stay.
+
+### Verified
+
+- 18/18 marketplace round-trip: submit, list, download, download-counter increments, four
+  server-side rejections (bad schema, impossible gesture, non-GitHub link, missing title), the
+  `mouse_hold` agreement, and slug de-duplication.
+- 296 unit tests, 21/21 live action, 10/10 volume, 12/12 overlay.
+
+### Still not deployed
+
+The Worker and D1 database remain uncreated — that needs a Cloudflare API token with `D1: Edit` and
+`Workers Scripts: Edit`. The token currently in `.env` is an **R2-scoped** token, which returns
+`Invalid API Token` (code 1000) on every API call. It has not been used to deploy anything. See
+`cloudflare/deploy.py`, whose four steps are each idempotent.
+
 ## [1.15.0] — a volume rocker on index + pinky
 
 ### The gesture
