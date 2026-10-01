@@ -128,6 +128,11 @@ class GestureEngine:
         self._volume_smooth_y: Optional[float] = None
         self._volume_accum = 0.0
         self._volume_release = 0
+        # two-hand screenshot: open -> both fists (moving) -> open, fast
+        self._shot_armed_at: Optional[float] = None
+        self._shot_fist_t0: Optional[float] = None
+        self._shot_fist_start: Optional[Tuple[float, float]] = None
+        self._shot_fired_at = 0.0
         self._left_fist_since: Optional[float] = None
         self._t_tab = 0.0
         self._shaka_since: Optional[float] = None
@@ -448,6 +453,12 @@ class GestureEngine:
         fist_conf = self._confirm("fist", n_ext == 0)
         pinches = primary.pinches
         can_start = self._lock_gate(primary, n_ext, pinches, left_hand, now)
+
+        # ---------------- two-hand screenshot ----------------
+        # BEFORE the tab modifiers, and deliberately: a two-hand fist is the shape a screenshot uses,
+        # and the modifiers own single-hand fists. Checking this first means a fast two-hand flourish
+        # is never read as "hold Alt" - which is the whole reason this gesture needs two hands.
+        out.extend(self._update_screenshot(primary, self._other_hand(primary, left_hand), now))
 
         # ---------------- Alt-Tab modifier (left hand fist, held) ----------------
         out.extend(self._update_alt_tab(left_hand, primary, now, target_hwnd, can_start))
@@ -973,6 +984,76 @@ class GestureEngine:
         return Intent("keys.tap", keys=("ctrl", "shift", "tab"), focus_hwnd=target_hwnd,
                       note="swipe left")
 
+    def _update_screenshot(self, primary: Optional[HandPose], other: Optional[HandPose],
+                           now: float) -> List[Intent]:
+        """BOTH hands open -> both fists -> both open, fast: a screenshot.
+
+        Two hands are required, which is the point: a single left fist is the Alt-Tab modifier and a
+        single right fist is the Ctrl-Tab modifier, so a one-hand gesture here would collide with
+        both. `_other_hand` returns None when only one hand is in frame, so this simply cannot fire
+        on one hand.
+
+        The Alt-Tab collision is deeper than that, and this is what resolves it: a left fist held
+        STILL is a modifier someone is about to use. So both fists must also TRAVEL, in the same
+        direction, by `screenshot_fist_px`, while closed, and the whole flourish must fit inside
+        `screenshot_window_s`. A deliberate slow two-hand clench is neither fast nor moving, so it
+        stays an Alt-Tab and never becomes a screenshot.
+
+        Fires on the return to open, once, and only if the fists were fast and moving. Everything is
+        cleared by `release_all`, so a hand loss mid-flourish cannot fire it later.
+        """
+        out: List[Intent] = []
+        if not bool(self.cfg["screenshot_enabled"]):
+            return out
+        if other is None:
+            # one hand only: never armed, and any half-finished flourish is abandoned
+            self._shot_armed_at = None
+            self._shot_fist_t0 = None
+            self._shot_fist_start = None
+            return out
+
+        both_fist = self._is_fist(primary) and self._is_fist(other)
+        any_fist = self._is_fist(primary) or self._is_fist(other)
+        both_open = (primary.num_extended >= 3 and other.num_extended >= 3
+                     and not primary.pinches.get("index") and not other.pinches.get("index"))
+
+        if both_fist:
+            if self._shot_armed_at is None:
+                return out
+            if self._shot_fist_t0 is None:
+                if not self._confirm("shot", True, int(self.cfg["screenshot_fist_frames"])):
+                    return out
+                # remember where the fists were when they closed, to measure the travel
+                self._shot_fist_t0 = now
+                self._shot_fist_start = (float(primary.palm_px[0]), float(primary.palm_px[1]))
+                self.last_note = "screenshot: both fists"
+                return out
+            return out
+
+        if self._shot_fist_t0 is not None and both_open:
+            # the fists are opening again - this is the moment to decide
+            start = self._shot_fist_start or (0.0, 0.0)
+            dx = float(primary.palm_px[0]) - start[0]
+            dy = float(primary.palm_px[1]) - start[1]
+            moved = math.hypot(dx, dy) >= abs(float(self.cfg["screenshot_fist_px"]))
+            fast = (now - (self._shot_armed_at or now)) <= float(self.cfg["screenshot_window_s"])
+            cooled = (now - self._shot_fired_at) >= float(self.cfg["screenshot_cooldown_s"])
+            if moved and fast and cooled and self._shot_armed_at is not None:
+                self._shot_fired_at = now
+                out.append(Intent("keys.tap", keys=tuple(self.cfg["screenshot_keys"]),
+                                  note="screenshot"))
+                self.last_note = "screenshot!"
+            else:
+                why = "too slow" if not fast else ("fists did not move" if not moved else "cooling")
+                self.last_note = f"two-hand fists ignored ({why})"
+        self._shot_armed_at = None
+        self._shot_fist_t0 = None
+        self._shot_fist_start = None
+        self._confirm("shot", False)
+        if both_open and not any_fist:
+            self._shot_armed_at = now
+        return out
+
     def _update_alt_tab(self, left_hand: Optional[HandPose], primary: HandPose, now: float,
                         target_hwnd: Optional[int] = None,
                         can_start: bool = True) -> List[Intent]:
@@ -1072,6 +1153,11 @@ class GestureEngine:
         self._volume_accum = 0.0
         self._volume_release = 0
         self._volume_y0 = 0.0
+        # A screenshot flourish left half-armed would fire on the next open hand it sees, which could
+        # be the start of a swipe or a drag rather than the end of that flourish.
+        self._shot_armed_at = None
+        self._shot_fist_t0 = None
+        self._shot_fist_start = None
         if reason:
             self.last_note = f"released ({reason})"
         return out

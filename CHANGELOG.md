@@ -5,6 +5,50 @@ All notable changes to Kinesis. The README stays compact on purpose: this is whe
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are
 [semantic](https://semver.org/spec/v2.0.0.html).
 
+## [1.18.0] — a two-hand screenshot gesture
+
+**Both hands open → both fists → both open, fast.** Sends `PrintScreen`.
+
+    screenshot_enabled     true    the gesture exists
+    screenshot_window_s    0.45    the whole open->fist->open must fit in this
+    screenshot_fist_px     45.0    and BOTH fists must travel this far while closed
+    screenshot_fist_frames 2       a fist must be seen this many frames before it counts
+    screenshot_cooldown_s  1.2     so one flourish cannot fire repeatedly
+
+### Why two hands, and why the fists must move
+
+A single left fist is the Alt-Tab modifier and a single right fist is the Ctrl-Tab modifier. So a
+one-hand screenshot would collide with both, and the two-hand requirement is the whole safety story
+— `_other_hand()` returns `None` when only one hand is in frame, so this physically cannot fire on
+one hand. (`_select_hands` returns the *same* hand for both roles when only one is visible, which is
+exactly how a one-hand fist used to minimise; a test pins that here too.)
+
+The deeper collision is a **held** two-hand clench: that looks like someone reaching for Alt-Tab, and
+a timing window alone would not separate it. So both fists must also **travel**, in the same
+direction, by `screenshot_fist_px`, while closed. A deliberate slow clench is neither fast nor moving,
+so it stays a modifier gesture and never becomes a screenshot. Both halves are tested separately:
+`test_a_slow_two_hand_fist_is_not_a_screenshot` and `test_a_still_two_hand_fist_is_not_a_screenshot`.
+
+The check runs **before** the tab modifiers in `update()`, so a fast two-hand flourish is never read
+as "hold Alt" in the first place.
+
+### The key
+
+The bare `PrintScreen` VK, so it inherits whatever the machine is configured for. On Joe's box that
+opens the **snip-and-select overlay** — drag the region you want — rather than silently copying to
+the clipboard. That is the behaviour he expects from the key, so nothing is overridden.
+`Win+PrintScreen` (save to file) is deliberately not aliased to the plain name.
+
+**A note on how this was verified, because I got it wrong first:** a scripted check concluded "the
+key is not landing" because it asserted the clipboard gained an image. The key *was* landing — the
+assertion was wrong for a machine configured for snip-and-select. Reported from the corrected
+criterion, not the assumed one.
+
+### Tests
+
+360 (8 new). Beyond the two collision cases: a one-hand fist cannot screenshot, hand loss mid-fist
+cannot fire later, one flourish fires once, and `screenshot_enabled=false` silences it.
+
 ## [1.17.0] — in-app calibration hands over the camera; credits in the terminal
 
 ### The camera bug (the one that broke "F"ull sweep)

@@ -48,6 +48,7 @@ GESTURE_HELP = """
  claw (4 fingertips to thumb) + drag down   minimise the window you are looking at
  claw, then spread the fingers      maximise / fullscreen  (f = YouTube, F11 = otherwise)
  index + pinky out, held, up/down   system volume        (middle + ring stay curled)
+ BOTH hands open -> fist -> open    screenshot           (fast, with the fists moving)
  thumb + pinky out (shaka)          hold Ctrl+Space     (push to talk)
  eye gaze, continued                scroll, pick the target window, click browser tabs
  END key                            quit

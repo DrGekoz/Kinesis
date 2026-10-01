@@ -55,6 +55,7 @@ Built for desks with several monitors, not one. Your eyes track what you are foc
 | Claw, then **spread** the fingers apart | Maximise; if maximised, fullscreen (`f` on YouTube, `F11` elsewhere) |
 | Thumb + pinky out, other three curled | Hold `Ctrl+Space` — push-to-talk dictation |
 | **Index + pinky** out, middle and ring curled, held | Move the hand **up** / **down** to raise or lower the system volume |
+| **Both hands** open → both fists → open, fast | Screenshot (follows your machine's PrintScreen behaviour — snip-and-select, or straight to the clipboard) |
 | **Left** fist held 2 s | Opens Alt-Tab and holds `Alt`; each right-hand pinch taps `Tab`; opening the left fist commits |
 | `END` | Quit, releasing everything |
 
@@ -306,6 +307,7 @@ Everything lives in `kinesis_config.json` and every key can be overridden live w
 | `volume_enabled` / `volume_step_px` / `volume_max_steps` | true / 26 / 2 | The volume rocker: on, palm travel per step (~2%), and the per-frame ceiling |
 | `volume_deadband_px` / `volume_smooth` | 4.0 / 0.35 | Movement below this is ignored; palm smoothing so noise is never a step |
 | `volume_keys_up` / `volume_keys_down` | volumeup / volumedown | The Windows master-volume keys the rocker sends |
+| `screenshot_enabled` / `screenshot_window_s` / `screenshot_fist_px` | true / 0.45 / 45 | The two-hand screenshot: on, how fast the whole flourish must be, and how far the fists must travel |
 | `ctrl_tab_flick_guard` | two_hands | Legacy no-op, kept so old configs load — the flick it guarded is gone |
 | `swipe_action` | none | The old lateral-swipe tab binding — replaced, off by default |
 | `ptt_keys` | ctrl, space | The dictation hotkey the shaka holds |
@@ -352,7 +354,7 @@ Everything lives in `kinesis_config.json` and every key can be overridden live w
 ## Verification
 
 ```bat
-.venv\Scripts\python -m pytest tests -q       352 passed
+.venv\Scripts\python -m pytest tests -q       360 passed
 .venv\Scripts\python tools\verify_actions.py  21/21 live OS checks
 .venv\Scripts\python tools\verify_volume.py    10/10 volume-key checks (mixer response skipped where it cannot be read)
 node tools\marketplace_stub.mjs 8787        runs the real Worker locally against an in-memory D1
@@ -367,7 +369,7 @@ node tools\marketplace_stub.mjs 8787        runs the real Worker locally against
 check.bat                                     all of the above, in order
 ```
 
-352 tests cover every gesture, the pose classifier, the click/fist arbitration, gesture locking, the
+360 tests cover every gesture, the pose classifier, the click/fist arbitration, gesture locking, the
 Alt-Tab session, gaze targeting and focus, desk geometry against a hand-built EDID block, overlay
 rendering, and release-all safety — with landmark geometry synthesised at exact joint angles rather
 than recorded, so each classification is checked against a known-correct input.

@@ -705,6 +705,116 @@ def test_volume_can_be_turned_off(cfg):
     assert not [i for i in d.intents if i.keys and i.keys[0].startswith("volume")]
 
 
+# ============================================================ two-hand screenshot
+def test_both_hands_fast_open_fist_open_takes_a_screenshot(cfg):
+    """The gesture: both hands open, snap to fists, back to open - quickly, with the fists MOVING."""
+    d = Driver(cfg)
+    d.feed([make_pose(cfg, **OPEN, palm=(0.5, 0.5)),
+            make_pose(cfg, **OPEN, palm=(0.35, 0.5), handedness="Left")], steps=3)
+    # snap the fists closed, travelling downward as they close
+    d.feed([make_pose(cfg, **FIST, palm=(0.5, 0.72)),
+            make_pose(cfg, **FIST, palm=(0.35, 0.72), handedness="Left")], steps=2)
+    # and open again
+    d.clear()
+    d.feed([make_pose(cfg, **OPEN, palm=(0.5, 0.5)),
+            make_pose(cfg, **OPEN, palm=(0.35, 0.5), handedness="Left")], steps=3)
+    shots = [i for i in d.intents if i.keys == ("printscreen",)]
+    assert len(shots) == 1, f"expected one screenshot, got {d.kinds()}"
+
+
+def test_a_one_hand_fist_never_screenshots(cfg):
+    """A single fist is the Alt-Tab / Ctrl-Tab modifier. One hand must not be able to screenshot."""
+    d = Driver(cfg)
+    d.feed([make_pose(cfg, **OPEN)], steps=3)
+    d.feed([make_pose(cfg, **FIST, palm=(0.5, 0.75))], steps=2)
+    d.clear()
+    d.feed([make_pose(cfg, **OPEN, palm=(0.5, 0.5))], steps=3)
+    assert not [i for i in d.intents if i.keys == ("printscreen",)], \
+        f"one hand took a screenshot: {d.kinds()}"
+
+
+def test_a_slow_two_hand_fist_is_not_a_screenshot(cfg):
+    """The Alt-Tab collision. A held two-hand clench is slow, so it stays a modifier gesture."""
+    d = Driver(cfg)
+    d.feed([make_pose(cfg, **OPEN, palm=(0.5, 0.5)),
+            make_pose(cfg, **OPEN, palm=(0.35, 0.5), handedness="Left")], steps=3)
+    d.feed([make_pose(cfg, **FIST, palm=(0.5, 0.72)),
+            make_pose(cfg, **FIST, palm=(0.35, 0.72), handedness="Left")], steps=40)  # ~1.3 s
+    d.clear()
+    d.feed([make_pose(cfg, **OPEN, palm=(0.5, 0.5)),
+            make_pose(cfg, **OPEN, palm=(0.35, 0.5), handedness="Left")], steps=3)
+    assert not [i for i in d.intents if i.keys == ("printscreen",)], \
+        f"a slow two-hand clench screenshotted: {d.kinds()}"
+
+
+def test_a_still_two_hand_fist_is_not_a_screenshot(cfg):
+    """Fast but motionless: someone clenching and unclenching without moving. Not a screenshot."""
+    d = Driver(cfg)
+    d.feed([make_pose(cfg, **OPEN, palm=(0.5, 0.5)),
+            make_pose(cfg, **OPEN, palm=(0.35, 0.5), handedness="Left")], steps=3)
+    d.feed([make_pose(cfg, **FIST, palm=(0.5, 0.5)),
+            make_pose(cfg, **FIST, palm=(0.35, 0.5), handedness="Left")], steps=2)
+    d.clear()
+    d.feed([make_pose(cfg, **OPEN, palm=(0.5, 0.5)),
+            make_pose(cfg, **OPEN, palm=(0.35, 0.5), handedness="Left")], steps=3)
+    assert not [i for i in d.intents if i.keys == ("printscreen",)], \
+        f"a still two-hand clench screenshotted: {d.kinds()}"
+
+
+def test_hand_loss_mid_fist_cannot_screenshot_later(cfg):
+    """Both fists, then one hand leaves, then an open hand appears. Nothing should fire."""
+    d = Driver(cfg)
+    d.feed([make_pose(cfg, **OPEN, palm=(0.5, 0.5)),
+            make_pose(cfg, **OPEN, palm=(0.35, 0.5), handedness="Left")], steps=3)
+    d.feed([make_pose(cfg, **FIST, palm=(0.5, 0.72)),
+            make_pose(cfg, **FIST, palm=(0.35, 0.72), handedness="Left")], steps=2)
+    d.clear()
+    d.feed([], steps=2)                                   # hand loss
+    d.feed([make_pose(cfg, **OPEN, palm=(0.5, 0.5))], steps=3)
+    assert not [i for i in d.intents if i.keys == ("printscreen",)], \
+        f"a screenshot survived hand loss: {d.kinds()}"
+
+
+def test_the_screenshot_has_a_cooldown(cfg):
+    """One flourish fires once, and a second one immediately after does not."""
+    d = Driver(cfg)
+    for _ in range(2):
+        d.feed([make_pose(cfg, **OPEN, palm=(0.5, 0.5)),
+                make_pose(cfg, **OPEN, palm=(0.35, 0.5), handedness="Left")], steps=3)
+        d.feed([make_pose(cfg, **FIST, palm=(0.5, 0.72)),
+                make_pose(cfg, **FIST, palm=(0.35, 0.72), handedness="Left")], steps=2)
+        d.feed([make_pose(cfg, **OPEN, palm=(0.5, 0.5)),
+                make_pose(cfg, **OPEN, palm=(0.35, 0.5), handedness="Left")], steps=3)
+    shots = [i for i in d.intents if i.keys == ("printscreen",)]
+    assert len(shots) == 1, f"the cooldown let {len(shots)} screenshots through in a burst"
+
+
+def test_screenshot_can_be_turned_off(cfg):
+    cfg.set("screenshot_enabled", False)
+    d = Driver(cfg)
+    d.feed([make_pose(cfg, **OPEN, palm=(0.5, 0.5)),
+            make_pose(cfg, **OPEN, palm=(0.35, 0.5), handedness="Left")], steps=3)
+    d.feed([make_pose(cfg, **FIST, palm=(0.5, 0.72)),
+            make_pose(cfg, **FIST, palm=(0.35, 0.72), handedness="Left")], steps=2)
+    d.clear()
+    d.feed([make_pose(cfg, **OPEN, palm=(0.5, 0.5)),
+            make_pose(cfg, **OPEN, palm=(0.35, 0.5), handedness="Left")], steps=3)
+    assert not [i for i in d.intents if i.keys == ("printscreen",)]
+
+
+def test_one_hand_does_not_leak_into_the_screenshot_state(cfg):
+    """`_select_hands` returns the SAME hand for both roles when only one is in frame, so a
+    two-hand rule gated on `left_hand is not None` would fire on one hand. `_other_hand` is the
+    guard, and this is the test that proves it is wired in."""
+    d = Driver(cfg)
+    d.feed([make_pose(cfg, **OPEN, palm=(0.5, 0.5))], steps=3)
+    d.feed([make_pose(cfg, **FIST, palm=(0.5, 0.72))], steps=2)
+    d.clear()
+    d.feed([make_pose(cfg, **OPEN, palm=(0.5, 0.5))], steps=3)
+    assert not [i for i in d.intents if i.keys == ("printscreen",)], \
+        "a single hand satisfied a two-hand gesture"
+
+
 # ============================================================ gestures: clicks
 def test_pinch_clicks_once(cfg):
     """A pinch is committed on release (or while held past the arm time), and exactly once."""

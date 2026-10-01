@@ -76,6 +76,13 @@ VK = {
     "-": 0xBD, "minus": 0xBD, "hyphen": 0xBD, "_": 0xBD,
     "f1": 0x70, "f2": 0x71, "f3": 0x72, "f4": 0x73, "f5": 0x74, "f6": 0x75,
     "f7": 0x76, "f8": 0x77, "f9": 0x78, "f10": 0x79, "f11": 0x7A, "f12": 0x7B,
+    # PrintScreen, for the two-hand screenshot gesture. The bare key is what a physical PrintScreen
+    # does, so it follows whatever the machine is configured for: on Joe's box that opens the
+    # snip-and-select overlay (drag the region you want), elsewhere it copies straight to the
+    # clipboard. Either is the behaviour he expects from the key, so there is nothing to override.
+    # The Win+PrintScreen variant saves to a file instead, and needs a modifier - so it is NOT
+    # aliased to the plain name.
+    "printscreen": 0x2C, "print_screen": 0x2C, "print-screen": 0x2C, "prtsc": 0x2C, "screenshot": 0x2C,
     # The multimedia keys. These are the master volume keys, which is what a gesture wants: they
     # adjust whatever the system considers the default output, and they are the same keys the
     # keyboard's volume rocker sends - so no extra dependency and no per-app focus problems.

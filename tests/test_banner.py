@@ -18,7 +18,9 @@ GONE = ("adaptive scroll", "open hand swipe", "pinky pinch (hold)",
 PRESENT = ("thumb + ring pinch", "drag", "zoom in", "zoom out", "right fist held",
            "left fist held", "shaka", "push to talk", "end key",
            # v1.13.0 claw (minimise by dragging, maximise by spreading) and v1.15.0 volume rocker
-           "claw", "spread", "volume", "index + pinky")
+           "claw", "spread", "volume", "index + pinky",
+           # v1.18.0: the two-hand screenshot
+           "screenshot", "both hands")
 
 
 def test_banner_says_the_eyes_move_the_cursor():

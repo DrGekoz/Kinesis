@@ -226,6 +226,20 @@ DEFAULTS: Dict[str, Any] = {
     "volume_release_frames": 3,
     "volume_keys_up": ("volumeup",),
     "volume_keys_down": ("volumedown",),
+    # Screenshot: BOTH hands open -> both fists -> both open, fast. The two-hand requirement is the
+    # whole safety story - a single left fist is the Alt-Tab modifier, so one hand can never take a
+    # screenshot, and a two-hand fist is the only shape that can.
+    #
+    # The Alt-Tab collision is real and is handled by `screenshot_fist_px`: a fist held still is a
+    # modifier, a fist that travels is a screenshot. BOTH hands must move, in the same direction, by
+    # that much, inside `screenshot_window_s`. So a deliberate slow two-hand clench (the thing that
+    # looks like it wants to be Alt-Tab) is far too slow and far too still to fire this.
+    "screenshot_enabled": True,
+    "screenshot_window_s": 0.45,          # the whole open->fist->open must happen this fast
+    "screenshot_fist_px": 45.0,           # and BOTH fists must travel this far while closed
+    "screenshot_fist_frames": 2,          # a fist must be seen this many frames before it counts
+    "screenshot_cooldown_s": 1.2,         # so one flourish cannot fire repeatedly
+    "screenshot_keys": ("printscreen",),
     "ring_confirm_frames": 2,          # ring pinch must hold this long before whatever it is bound
                                        # to starts (was scroll_confirm_frames)
     "drag_confirm_frames": 2,          # thumb-pinky drag must hold this long too (also keeps
