@@ -9,6 +9,7 @@ problem.
 """
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import sys
 import urllib.error
@@ -41,6 +42,10 @@ def get(env, path):
 
 
 def main() -> int:
+    ap = argparse.ArgumentParser(description="Is the Kinesis marketplace ready to deploy?")
+    ap.add_argument("--json", action="store_true", help="print the verdict as JSON")
+    args = ap.parse_args()
+
     env = deploy.read_env()
     account = env.get("CLOUDFLARE_ACCOUNT_ID", "")
     print("=== credentials ===")
@@ -48,6 +53,8 @@ def main() -> int:
     print(f"api token ...... {'set (' + str(len(env.get('CLOUDFLARE_API_TOKEN',''))) + ' chars)' if env.get('CLOUDFLARE_API_TOKEN') else 'MISSING'}")
     if not account or not env.get("CLOUDFLARE_API_TOKEN"):
         print("\nput CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN in .env")
+        if args.json:
+            print('{"ready": false, "reason": "missing credentials"}')
         return 1
 
     verify = get(env, "/user/tokens/verify")
@@ -68,6 +75,8 @@ def main() -> int:
     if deploy.DB_NAME in names:
         print(f"\n>>> the database {deploy.DB_NAME} already exists - the remaining step is the Worker.")
         print(">>> re-run:  .venv\\Scripts\\python cloudflare\\deploy.py")
+        if args.json:
+            print('{"ready": true, "reason": "database exists, publish the worker"}')
         return 0
 
     print()
@@ -75,7 +84,7 @@ def main() -> int:
     print("An R2 API token can read D1 but cannot create one. That is a scope limit, not a")
     print("misconfiguration, so there is nothing to retry here. Either:\n")
     print("  A) create the database by hand (no new token needed, ~20 seconds)")
-    print(f"     dashboard -> Workers & Pages -> D1 SQL Database -> Create -> name it exactly")
+    print(f"     dashboard -> Workers and Pages -> D1 SQL Database -> Create -> name it exactly")
     print(f"     {deploy.DB_NAME}")
     print("     then run:  .venv\\Scripts\\python cloudflare\\deploy.py")
     print("     (it finds the existing database and continues from there)\n")
@@ -83,6 +92,8 @@ def main() -> int:
     print("     dashboard -> My Profile -> API Tokens -> Create Token -> Edit Account")
     print("     permissions: Account > D1 > Edit   and   Account > Workers Scripts > Edit")
     print("     then put it in .env as CLOUDFLARE_API_TOKEN and re-run deploy.py")
+    if args.json:
+        print('{"ready": false, "reason": "token cannot create a database"}')
     return 1
 
 

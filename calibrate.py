@@ -9,6 +9,7 @@ monotonic across the screens and reports it.
 """
 from __future__ import annotations
 
+import argparse
 import statistics
 import sys
 import time
