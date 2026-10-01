@@ -62,7 +62,9 @@ class CameraThread(threading.Thread):
         self._frame = None
         self._seq = 0
         self._consumed = 0
-        self._stop = threading.Event()
+        # NAMED _halt, NOT _stop - `Thread` has a private `self._stop()` METHOD that its own start()
+        # calls, and shadowing it breaks every restart. See the note in InferenceThread.
+        self._halt = threading.Event()
         self.captured = 0
         self.opened = False
         self.error: Optional[str] = None
@@ -95,7 +97,7 @@ class CameraThread(threading.Thread):
         return w or self.width, h or self.height
 
     def run(self):
-        while not self._stop.is_set():
+        while not self._halt.is_set():
             ok, frame = self._cap.read()
             if not ok or frame is None:
                 time.sleep(0.005)
@@ -120,7 +122,7 @@ class CameraThread(threading.Thread):
             return self._frame, self._seq, time.perf_counter()
 
     def stop(self):
-        self._stop.set()
+        self._halt.set()
         if self.opened:
             try:
                 self._cap.release()
@@ -146,7 +148,11 @@ class InferenceThread(threading.Thread):
         self._raw_frame = None
         self._stamp = 0.0
         self._seq = -1
-        self._stop = threading.Event()
+        # NAMED _halt, NOT _stop. `Thread` has a private `self._stop()` METHOD that its own
+        # `Thread.start()` calls. Assigning an Event to `self._stop` shadows it, and every restart
+        # dies with `TypeError: 'Event' object is not callable` from inside CPython's threading.py.
+        # Cost one real crash to find; keeping the name distinct so it cannot come back.
+        self._halt = threading.Event()
         self.inferred = 0
         self.dropped = 0
         self.inference_ms = 0.0
@@ -184,7 +190,7 @@ class InferenceThread(threading.Thread):
             self.fatal = True
             return
         mirror = bool(self.cfg["mirror"])
-        while not self._stop.is_set():
+        while not self._halt.is_set():
             frame, seq, captured = self.camera.latest()
             if frame is None:
                 time.sleep(0.001)
@@ -241,7 +247,7 @@ class InferenceThread(threading.Thread):
             return self._raw_frame, self._stamp
 
     def stop(self):
-        self._stop.set()
+        self._halt.set()
         if self._mp_hands is not None:
             try:
                 self._mp_hands.close()
@@ -271,6 +277,25 @@ class TrackingEngine:
         self._latency_count = 0
 
     def start(self) -> bool:
+        """Open the camera and start both threads.
+
+        RESTARTABLE, because the in-app gaze calibration has to take the camera away and hand it
+        back: it stops this engine, runs `calibrate_gaze.py` as a separate process, then starts it
+        again. Two things make a naive restart fail, and both were a real crash:
+
+        1. the `_halt` Event is SET by `stop()` and never cleared, so a restarted camera thread
+           would return immediately from its own `while not self._halt.is_set()`.
+        2. A `Thread` object cannot be started twice - it raises `RuntimeError: threads can only be
+           started once`. The old one is genuinely dead, so it has to be replaced, not reused.
+
+        So both objects are rebuilt from scratch. Everything they own is per-run state anyway, and
+        the MediaPipe hands model is re-created with them.
+        """
+        if self.camera.opened and self.inference is not None and self.inference.is_alive():
+            return True                              # already running; nothing to do
+        self.camera = CameraThread(int(self.cfg["camera_index"]), int(self.cfg["frame_width"]),
+                                   int(self.cfg["frame_height"]),
+                                   backend=str(self.cfg["camera_backend"]))
         if not self.camera.open():
             return False
         self.camera.start()
@@ -282,6 +307,13 @@ class TrackingEngine:
         if self.inference:
             self.inference.stop()
         self.camera.stop()
+        # Join so the threads are genuinely finished before anyone tries to reopen the device.
+        # Without this, a restart can race the old capture thread for the camera - and the symptom
+        # is the "could not open camera" message pointing at the user, when the app caused it.
+        if self.inference is not None and self.inference.is_alive():
+            self.inference.join(timeout=2.0)
+        if self.camera.is_alive():
+            self.camera.join(timeout=2.0)
 
     def _filter_for(self, handedness: str) -> HandFilter:
         f = self._filters.get(handedness)

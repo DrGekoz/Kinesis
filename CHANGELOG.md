@@ -5,6 +5,55 @@ All notable changes to Kinesis. The README stays compact on purpose: this is whe
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are
 [semantic](https://semver.org/spec/v2.0.0.html).
 
+## [1.18.1] — the app no longer exits after calibrating
+
+**I shipped this in v1.17.0.** The camera handoff worked — the calibration ran and produced a
+model — and then the app exited instead of starting up. Both faults were mine and both were
+invisible to the suite, because nothing restarted a stopped engine.
+
+### Fault 1: the engine could not be restarted at all
+
+`TrackingEngine.start()` was written for a first start only:
+
+- the stop `Event` was SET by `stop()` and never cleared, so a restarted camera thread returned
+  immediately from its own `while not self._halt.is_set()` and never captured a frame
+- both `Thread` objects were reused, and `Thread.start()` raises
+  `RuntimeError: threads can only be started once`
+
+`start()` now rebuilds both objects, and `stop()` joins them so a restart cannot race the old
+capture thread for the device.
+
+### Fault 2: `_stop` shadowed a private method of `threading.Thread`
+
+Worse, and it only surfaced once Fault 1 was fixed. Both `CameraThread` and `InferenceThread`
+subclass `threading.Thread` and assigned their stop `Event` to **`self._stop`** — a name CPython
+uses for a private *method* that its own `Thread.start()` and `Thread.join()` call. So every
+restart died inside the standard library:
+
+```
+TypeError: 'Event' object is not callable
+  File "...\threading.py", line 1123, in join
+    self._wait_for_tstate_lock(...)
+```
+
+Renamed to `_halt` in both classes, with the reason written down so it is not "tidied" back.
+
+### Verified on the actual C920, through the actual failure path
+
+```
+step 1: start            frames flowing: True   shape=(480, 640, 3)
+step 2: stop             stopped cleanly, no exception
+step 3: start again      start() returned True          <- v1.17.0 returned False and exited
+step 4: capture          frames after the restart: 30
+```
+
+Step 4 matters: `start()` returning `True` is not proof of a working camera, so the check keeps
+reading frames rather than trusting the return value.
+
+**366 tests** (6 new in `test_tracking_restart.py`): a stubbed restart, a stop/start that keeps
+capturing on the real camera, double `stop()` safety, idempotent `start()`, and the two specific
+properties that broke — a fresh stop-event and a fresh thread object.
+
 ## [1.18.0] — a two-hand screenshot gesture
 
 **Both hands open → both fists → both open, fast.** Sends `PrintScreen`.
