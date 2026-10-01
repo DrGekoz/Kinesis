@@ -45,20 +45,34 @@ GESTURE_HELP = """
  RIGHT fist held 0.6s               hold Ctrl; LEFT thumb+index taps Tab (next tab)
                                     LEFT thumb+middle taps Shift+Tab (previous tab)
  LEFT fist held 2s                  hold Alt; right-hand thumb+index pinches tap Tab
- open hand -> closed fist           minimise            (exits fullscreen first if needed)
- closed fist -> open hand           maximise / fullscreen  (f = YouTube, F11 = otherwise)
+ claw (4 fingertips to thumb) + drag down   minimise the window you are looking at
+ claw, then spread the fingers      maximise / fullscreen  (f = YouTube, F11 = otherwise)
+ index + pinky out, held, up/down   system volume        (middle + ring stay curled)
  thumb + pinky out (shaka)          hold Ctrl+Space     (push to talk)
  eye gaze, continued                scroll, pick the target window, click browser tabs
  END key                            quit
+
+ Window actions need a target: if your eyes are not on a window they do nothing at all.
 """
 
 
-def _maybe_calibrate(cfg, gaze) -> bool:
+def _maybe_calibrate(cfg, gaze, engine=None) -> bool:
     """Offer to run the gaze calibration wizard from inside the app.
 
     Printing "run calibrate_gaze.bat" was never enough. To someone who does not know what that file
     is, an uncalibrated app is simply an app whose eye tracking does not work, and it stays that way -
     so ask, and run it here.
+
+    THE CAMERA HAS TO BE HANDED OVER. This runs while the app is already up and tracking, so the
+    webcam is open in this process. The wizard is a separate process, and a webcam can only be held
+    by one of them: the wizard died with
+
+        could not open the camera - close anything else using it and retry
+
+    which is a message aimed at the user when the thing using it is the app asking the question. So
+    `engine` is stopped first (which releases the device), the wizard runs, and the engine is started
+    again afterwards - on both paths, including a failed one, so declining the calibration cannot
+    leave the app with no camera.
     """
     try:
         if not sys.stdin or not sys.stdin.isatty():
@@ -77,13 +91,25 @@ def _maybe_calibrate(cfg, gaze) -> bool:
     if not script.is_file():
         print(f"[gaze] cannot find {script}")
         return False
+
+    released = False
+    if engine is not None:
+        print("[gaze] releasing the camera so the wizard can have it...")
+        engine.stop()
+        released = True
     print(f"[gaze] starting the {'quick' if quick else 'full'} calibration - sit normally and look "
           f"at each dot without moving your head")
     try:
         rc = subprocess.call([sys.executable, "-u", str(script)] + (["--quick"] if quick else []))
     except Exception as exc:
         print(f"[gaze] could not run the wizard: {exc}")
-        return False
+        rc = 1
+    finally:
+        if released and not engine.start():
+            print("[gaze] the camera did not come back - restart Kinesis")
+            raise SystemExit(2)
+        if released:
+            print("[gaze] camera reconnected to the main loop")
     if rc != 0 or not gaze.model_path.exists():
         print("[gaze] no model came out of that - continuing without gaze")
         return False
@@ -368,7 +394,7 @@ class KinesisApp:
             print("    quick   ~15 s, one dot per monitor  - enough to pick a monitor, coarse")
             print("    full    ~40 s, a grid per monitor   - precise, and what you want")
             print()
-            if _maybe_calibrate(self.cfg, self.gaze):
+            if _maybe_calibrate(self.cfg, self.gaze, self.engine):
                 self.gaze.start()
             else:
                 print(" continuing without gaze. Run calibrate_gaze.bat whenever you are ready:")
@@ -382,6 +408,9 @@ class KinesisApp:
                           "run.bat --tune pinch_ring_action=scroll --save-config")
             print("=" * 78)
             print()
+        print("Created by DrGekoz - report issues on GitHub:")
+        print("  https://github.com/DrGekoz/Kinesis")
+        print()
         if self.desktop_overlay.enabled:
             if self.desktop_overlay.start():
                 print(f"[overlay] drawing on the desktop: {self.desktop_overlay.style}/"

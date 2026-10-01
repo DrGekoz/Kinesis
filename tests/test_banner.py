@@ -10,9 +10,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from kinesis.app import GESTURE_HELP                       # noqa: E402
 
-GONE = ("adaptive scroll", "open hand swipe", "pinky pinch (hold)")
+GONE = ("adaptive scroll", "open hand swipe", "pinky pinch (hold)",
+        # v1.13.0: the open->fist flick and fist->open maximise were removed. The banner listed
+        # them for three releases after that, which is worse than no banner - it tells someone to
+        # make a gesture that now does something else entirely (it holds Alt / Ctrl-Tab).
+        "open hand -> closed fist", "closed fist -> open hand", "flick")
 PRESENT = ("thumb + ring pinch", "drag", "zoom in", "zoom out", "right fist held",
-           "left fist held", "shaka", "push to talk", "end key")
+           "left fist held", "shaka", "push to talk", "end key",
+           # v1.13.0 claw (minimise by dragging, maximise by spreading) and v1.15.0 volume rocker
+           "claw", "spread", "volume", "index + pinky")
 
 
 def test_banner_says_the_eyes_move_the_cursor():

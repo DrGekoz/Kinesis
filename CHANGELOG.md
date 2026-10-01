@@ -5,6 +5,44 @@ All notable changes to Kinesis. The README stays compact on purpose: this is whe
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are
 [semantic](https://semver.org/spec/v2.0.0.html).
 
+## [1.17.0] — in-app calibration hands over the camera; credits in the terminal
+
+### The camera bug (the one that broke "F"ull sweep)
+
+`[F]ull sweep` from the startup prompt died with:
+
+```
+could not open the camera - close anything else using it and retry
+```
+
+Which is a message aimed at the user, when the thing using the camera was **the app that asked the
+question**. `_maybe_calibrate()` runs `calibrate_gaze.py` as a subprocess while the app is already
+up and tracking, so the webcam was open in this process and the wizard could never have it. A webcam
+can only be opened by one process at a time.
+
+`_maybe_calibrate(cfg, gaze, engine=None)` now stops the engine before launching the wizard and
+restarts it in a `finally`, so the camera comes back on **every** path — including a failed wizard
+and a `SystemExit`. If the camera genuinely cannot be reopened it says so and exits rather than
+running on with no camera.
+
+Proven on real hardware, not just in a fake: a child process could not open the C920 while the app
+held it (exit 1) and could immediately open and read a frame after release (exit 0).
+
+`tests/test_inapp_calibration.py` pins the order — release before, reconnect after, on success *and*
+failure — and that declining never touches the camera at all.
+
+### Credits
+
+```
+Created by DrGekoz - report issues on GitHub:
+  https://github.com/DrGekoz/Kinesis
+```
+
+printed at the end of the startup block, after setup and before the overlay/HUD take over. Verified by
+running the app, not by reading the diff.
+
+### 352 tests
+
 ## [1.16.1] — a one-command answer to "can this deploy yet?"
 
 `tools/deploy_check.py` is read-only and prints exactly what is missing, then stops.
