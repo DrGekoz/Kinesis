@@ -357,6 +357,7 @@ Everything lives in `kinesis_config.json` and every key can be overridden live w
 .venv\Scripts\python tools\verify_volume.py    10/10 volume-key checks (mixer response skipped where it cannot be read)
 node tools\marketplace_stub.mjs 8787        runs the real Worker locally against an in-memory D1
 .venv\Scripts\python tools\verify_marketplace.py   18/18 submit round-trip, no Cloudflare needed
+.venv\Scripts\python tools\deploy_check.py     is the marketplace ready to deploy, and what is missing
 .venv\Scripts\python tools\verify_overlay.py  12/12 against the real compositor
 .venv\Scripts\python tools\check_tabs.py      tab-strip detection against your open browsers
 .venv\Scripts\python -u tools/check_gaze.py   live gaze pipeline: camera, face, features, model

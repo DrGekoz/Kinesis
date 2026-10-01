@@ -1,6 +1,6 @@
 """Kinesis - webcam human-computer use."""
 
-__version__ = "1.16.0"
+__version__ = "1.16.1"
 
 # EyeTrax ships inside this repository (vendor/eyetrax) and is made importable here, so every
 # `from eyetrax import ...` in the package works on a fresh clone with nothing installed.

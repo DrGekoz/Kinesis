@@ -5,6 +5,40 @@ All notable changes to Kinesis. The README stays compact on purpose: this is whe
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are
 [semantic](https://semver.org/spec/v2.0.0.html).
 
+## [1.16.1] — a one-command answer to "can this deploy yet?"
+
+`tools/deploy_check.py` is read-only and prints exactly what is missing, then stops.
+
+It exists because the failure was genuinely hard to read. The token in `.env` is **R2-scoped**, and
+an R2 token's behaviour is confusing in three separate ways at once:
+
+- `/user/tokens/verify` returns `Invalid API Token` (code 1000) — so "the token is broken" is a
+  reasonable and **wrong** conclusion.
+- `GET /accounts/<id>` succeeds and returns the real account name, and `GET /d1/database` returns
+  `{"success": true, "result": []}`. An empty list is exactly what an *unauthenticated* read
+  returns, so "the credentials work" is also reasonable and wrong.
+- `POST /d1/database` — the one operation that matters — returns 401 `Authentication error`.
+
+Read 200, write 401. The token authenticates and can read; it simply cannot create. That is a scope
+limit, not a misconfiguration, so retrying, rewriting `wrangler.toml` or re-authenticating through
+wrangler cannot fix it. (wrangler's own OAuth token is a separate thing and expired on 2026-08-16.)
+
+I checked for a usable credential elsewhere on the machine before concluding this: the Hermes env
+has no Cloudflare keys, the pixel-office relay project has no `.dev.vars`, and there is no
+`CLOUDFLARE_*` variable in the shell. There is nothing left to try.
+
+### What the user has to do — either one
+
+**A. No new token, ~20 seconds.** Create the database by hand:
+*Workers & Pages → D1 SQL Database → Create → name it exactly `kinesis-gesture-maps`*, then run
+`cloudflare/deploy.py`. It detects an existing database and continues from there.
+
+**B. A token that can write.** *My Profile → API Tokens → Create Token → Edit Account* with
+`Account → D1 → Edit` and `Account → Workers Scripts → Edit`, then put it in `.env` as
+`CLOUDFLARE_API_TOKEN`.
+
+Nothing was deployed. 296 unit tests unchanged.
+
 ## [1.16.0] — the marketplace submit path is proven, and one bug it hid is fixed
 
 ### The bug
