@@ -19,6 +19,12 @@ CALIBRATION_PATH = ROOT / "kinesis_calibration.json"
 DEFAULTS: Dict[str, Any] = {
     # --- camera / capture ---
     "camera_index": 0,
+    # 640x480 is NOT a default by accident. Measured on this machine's C920 over DSHOW:
+    #   640x480  -> 14.0 fps      1280x720 -> 8.1 fps      1920x1080 -> 4.0 fps
+    # MJPG is ignored by the driver (it reports YUY2 either way), so there is no way to get 720p
+    # back to 15 fps. And a 720p frame bought no measurable gaze accuracy: MediaPipe's face
+    # landmarker rescales its input to a fixed square, so the extra pixels only change sub-pixel
+    # sampling. Higher resolution is available (frame_width/frame_height) but costs 6 fps.
     "frame_width": 640,
     "frame_height": 480,
     "camera_backend": "dshow",        # dshow | msmf | default
@@ -42,6 +48,21 @@ DEFAULTS: Dict[str, Any] = {
     "cursor_fallback": "hand",         # hand | hold - what to do before gaze is calibrated
     "gaze_cursor_deadband_px": 3.0,    # a resting eye must not jitter the pointer
     "gaze_cursor_smoothing": 0.55,     # 0 = raw, 1 = never moves: EMA on the eye cursor
+    # --- gaze outlier rejection (see filters.GazeStabiliser) ---
+    # The gaze model is a 486-feature ridge fitted from ~220 samples, so it is rank-deficient and
+    # 0.2% landmark noise moves the prediction by over a million pixels. Rejecting the excursion is
+    # the only thing that works: a deadband large enough to swallow that would eat real motion.
+    "gaze_reject_px": 260.0,           # drop a sample this far from the window median
+    "gaze_stabilise_window": 5,        # samples in the median/mean window
+    # 20000 px/s, not 9000: gaze runs at 20 Hz, so a 1920 px one-screen saccade is 38,400 px/s and
+    # the old value discarded real saccades as noise. Still three orders below the million-pixel
+    # excursions the stabiliser exists to reject.
+    "gaze_reject_speed_px_s": 20000.0,
+    "gaze_stabilise_deadband_px": 3.0, # floor for the adaptive deadband
+    "gaze_stabilise_deadband_gain": 2.0,  # deadband = max(floor, gain x window spread)
+    "gaze_slew_px": 900.0,             # max px the pointer may travel in one frame
+    "gaze_blink_guard": True,          # a blink must never steer the pointer
+    "gaze_require_stable": True,       # do not aim a gesture at a rejected/jerking sample
     "cursor_gain": 1.0,                # 1.0 = snap 1:1
     "active_margin": 0.10,             # frame edge trimmed from the tracking area
 
@@ -110,6 +131,19 @@ DEFAULTS: Dict[str, Any] = {
     "youtube_title_hint": "youtube",
     "youtube_fs_key": "f",
     "generic_fs_key": "f11",
+    # --- force close: CTRL+ALT+F4 on the window you are looking at ---
+    # The shape has to be one the other gestures cannot make, and both fists are already spoken for
+    # (left = hold Alt, right = hold Ctrl) - which is why an earlier draft reached for a pinch and had
+    # to be abandoned: thumb+index is the left click and thumb+middle the right click, so a pinch is
+    # the single most-travelled shape in the app.
+    # BOTH HANDS OPEN AND STILL is free: the screenshot gesture needs both hands open AND MOVING
+    # (screenshot_fist_px), and a hold requires stillness, so the two can never both be true.
+    "force_close_enabled": True,
+    "force_close_hold_s": 1.2,         # long: closing a window is not a reflex
+    "force_close_move_px": 60.0,       # both hands must stay this close to where they started
+    "force_close_cooldown_s": 2.5,
+    "force_close_keys": ["ctrl", "alt", "f4"],
+    "force_close_requires_target": True,   # never fall back to the foreground window
 
     # --- desk geometry ---
     "geometry_enabled": True,          # use camera/monitor physical data in gaze calibration
@@ -125,6 +159,16 @@ DEFAULTS: Dict[str, Any] = {
     # --settings launch flag and is not meant to be saved.
     "settings_hotkey": "f2",
     "open_settings": False,
+    # Startup steps. Both default ON because both were asked for as run.bat behaviour, and both
+    # are cheap to turn off with --no-calibrate / --no-settings from the launcher.
+    #   force_gaze_calibration  run the gaze wizard before the loop starts, every run. A model
+    #                           fitted at one seat position degrades when you move, and a stale
+    #                           model is exactly what produces the "jittery pointer" report.
+    #   settings_at_start      open the settings window on every run so the screens can be picked
+    #                           per session (which displays to track changes with how you sit).
+    "force_gaze_calibration": True,
+    "settings_at_start": True,
+    "startup_calibration": "full",     # full | quick - which sweep to run at startup
     # Gesture-Maps: where the user's map is saved, and the marketplace endpoint (set by deploy.py)
     "gesture_map_path": "",
     "marketplace_api": "",
@@ -267,14 +311,45 @@ DEFAULTS: Dict[str, Any] = {
     "zoom_session_timeout_s": 20.0,
     # --- gaze focus: the window you look at becomes the focused window ---
     "gaze_focus_enabled": True,
-    "gaze_focus_dwell_s": 0.15,        # look at a window this long and it comes forward
+    # 0.15 s was far too short. Gaze jitters, so a 150 ms dwell completed while the point was
+    # still sweeping across the screen and focus landed on whatever the jitter happened to cross.
+    # 0.9 s is long enough that the point has to settle on a window on purpose.
+    "gaze_focus_dwell_s": 0.9,
     "gaze_focus_cooldown_s": 1.5,      # don't fight the user straight after focusing
     "gaze_focus_skip_fullscreen": True,
+    # The point must also be STEADY before it counts as "looking at" something: a window only
+    # becomes the dwell candidate once the gaze has stopped sweeping.
+    "gaze_focus_stable_s": 0.25,       # the point must stay within tolerance for this long
+    "gaze_focus_stable_px": 40.0,      # ... within this many px of where it was
     # --- desktop overlay (click-through, over the whole desktop) ---
     "desktop_overlay": False,
     "desktop_overlay_fps": 30.0,
     "desktop_overlay_style": "",       # "" follows vcam_style
     "desktop_overlay_theme": "",       # "" follows vcam_theme
+    # --- gaze metaball (kinesis/metaball.py) ---
+    # A white outlined blob that swells with dwell, leaves a shrinking trail, and animates to new
+    # positions at up to 180 fps. Enabled through desktop_overlay_style = "metaball", which reuses
+    # the existing click-through overlay windows (WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST
+    # | WS_EX_NOACTIVATE) rather than adding a second overlay path.
+    "metaball_scale": 3,               # field render scale; 3 is what makes 180 fps reachable
+    "metaball_max_fps": 180.0,
+    "metaball_max_diameter_px": 80.0,  # the head's largest size
+    "metaball_min_diameter_px": 10.0,  # its resting size
+    "metaball_grow_s": 1.2,            # dwell time to reach the maximum
+    "metaball_dwell_reset_px": 90.0,   # moving this far starts a new dwell
+    "metaball_shrink_s": 0.5,          # a trail blob's life, shrinking to radius 0
+    "metaball_trail_spacing_px": 26.0, # head travel between trail blobs
+    "metaball_trail_max": 48,
+    "metaball_trail_radius_ratio": 0.55,
+    "metaball_follow_tau_s": 0.030,    # head easing time constant -> "native speed"
+    "metaball_max_speed_px_s": 20000.0,
+    "metaball_outline_px": 3.0,        # SCREEN pixels, not field pixels
+    "metaball_outline_gain": 1.0,
+    "metaball_glow_sigma_px": 9.0,
+    "metaball_glow_gain": 0.34,        # the faint white glow, inside and outside
+    "metaball_inner_gain": 0.20,       # the wash inside the outline
+    "metaball_isolevel": 0.5,
+    "metaball_gain": 1.0,
     "desktop_overlay_scale": 6,        # internal render scale (cheaper than the vcam path)
     "desktop_overlay_alpha_gain": 1.25,
     "desktop_overlay_hotkey": "insert",  # toggles it at runtime

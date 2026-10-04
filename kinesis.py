@@ -57,6 +57,14 @@ def build_parser() -> argparse.ArgumentParser:
                    help="ask which screens to use, even if it has been answered before")
     p.add_argument("--settings", action="store_true",
                    help="open the settings window at startup (same as pressing F2)")
+    p.add_argument("--no-settings", action="store_true",
+                   help="do not open the settings window at startup (it opens by default now)")
+    p.add_argument("--calibrate", action="store_true",
+                   help="force the gaze calibration wizard at startup (it runs by default now)")
+    p.add_argument("--no-calibrate", action="store_true",
+                   help="skip the startup gaze calibration and use the existing model")
+    p.add_argument("--calibration-mode", choices=("full", "quick"), default=None,
+                   help="which sweep the startup calibration runs: full grid or one dot per screen")
     p.add_argument("--list-monitors", action="store_true", help="print monitor layout and exit")
     p.add_argument("--vcam-style", default=argparse.SUPPRESS,
                    choices=["pointer", "comet", "path", "heatmap", "heatmap_comet", "none"],
@@ -70,6 +78,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="how long --vcam-demo runs for")
     p.add_argument("--overlay-desktop", action="store_true",
                    help="draw the gaze overlay on the desktop itself (click-through, always on top)")
+    p.add_argument("--metaball", action="store_true",
+                   help="desktop overlay in metaball style: a white outlined blob that swells "
+                        "where you look and leaves a shrinking trail (180 fps)")
     p.add_argument("--no-overlay-desktop", action="store_true", help="disable the desktop overlay")
     p.add_argument("--desk-report", action="store_true",
                    help="print the physical desk: screens, sizes, camera FoV, seat distance")
@@ -102,6 +113,10 @@ def apply_args(args, cfg: Config) -> Config:
         cfg.set("desktop_overlay", False)
     if getattr(args, "overlay_desktop", False):
         cfg.set("desktop_overlay", True)
+    if getattr(args, "metaball", False):
+        # the metaball IS the desktop overlay, in its own style - not a second overlay path
+        cfg.set("desktop_overlay", True)
+        cfg.set("desktop_overlay_style", "metaball")
     if args.no_vcam:
         cfg.set("vcam_enabled", False)
     if args.vcam:
@@ -379,6 +394,17 @@ def main(argv=None) -> int:
 
     if args.settings:
         cfg.set("open_settings", True)
+    # Settings and startup calibration are both ON by default now, so each needs a way out. They
+    # are checked in this order on purpose: an explicit --settings wins over --no-settings, so a
+    # launcher can force the window open without editing the config.
+    if args.no_settings and not args.settings:
+        cfg.set("settings_at_start", False)
+    if args.calibrate:
+        cfg.set("force_gaze_calibration", True)
+    if args.no_calibrate:
+        cfg.set("force_gaze_calibration", False)
+    if args.calibration_mode:
+        cfg.set("startup_calibration", args.calibration_mode)
 
     if args.save_config:
         cfg.save()

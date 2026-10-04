@@ -133,6 +133,11 @@ class GestureEngine:
         self._shot_fist_t0: Optional[float] = None
         self._shot_fist_start: Optional[Tuple[float, float]] = None
         self._shot_fired_at = 0.0
+        # force close: both hands open and STILL, held
+        self._close_since: Optional[float] = None
+        self._close_anchor: Optional[Tuple[float, float, float, float]] = None
+        self._close_fired_at = 0.0
+        self._close_anchor_hwnd: Optional[int] = None
         self._left_fist_since: Optional[float] = None
         self._t_tab = 0.0
         self._shaka_since: Optional[float] = None
@@ -459,6 +464,13 @@ class GestureEngine:
         # and the modifiers own single-hand fists. Checking this first means a fast two-hand flourish
         # is never read as "hold Alt" - which is the whole reason this gesture needs two hands.
         out.extend(self._update_screenshot(primary, self._other_hand(primary, left_hand), now))
+
+        # ---------------- force close (both hands open and still, held) ----------------
+        # Also before the modifiers, and for the same class of reason: it is two-handed and it owns
+        # a pose no single-hand gesture can make. It emits nothing until the hold completes, so
+        # checking it early cannot steal a modifier.
+        out.extend(self._update_force_close(primary, self._other_hand(primary, left_hand), now,
+                                            target_hwnd))
 
         # ---------------- Alt-Tab modifier (left hand fist, held) ----------------
         out.extend(self._update_alt_tab(left_hand, primary, now, target_hwnd, can_start))
@@ -984,6 +996,112 @@ class GestureEngine:
         return Intent("keys.tap", keys=("ctrl", "shift", "tab"), focus_hwnd=target_hwnd,
                       note="swipe left")
 
+    def _update_force_close(self, primary: Optional[HandPose], other: Optional[HandPose],
+                            now: float, target_hwnd: Optional[int] = None) -> List[Intent]:
+        """BOTH hands open and STILL, held: CTRL+ALT+F4 on the window you are looking at.
+
+        The pose is chosen for what it CANNOT collide with, because almost every other shape in
+        Kinesis is taken:
+
+        * a single **fist** is a modifier - left holds Alt, right holds Ctrl - so a fist is out;
+        * a **pinch** is the most-travelled shape there is: thumb+index is the left click and
+          thumb+middle the right click, and thumb+ring is the drag;
+        * the **claw** is the minimise/maximise drag;
+        * **both hands open and MOVING** is the screenshot flourish.
+
+        "Both hands open and still" is the one shape left, and it is strictly disjoint from the
+        screenshot because that one requires travel (`screenshot_fist_px`) while this requires the
+        absence of it. Two hands are required, so a single hand can never arm it - which is what
+        `_other_hand` guarantees, the same trap that has bitten two earlier gestures.
+
+        Three further gates, because closing a window is the most destructive thing this app does:
+
+        1. **Stillness.** Both palms must stay within `force_close_move_px` of where they were when
+           the hold began. Without it, "both hands open" is just the resting pose and every pause
+           would close something.
+        2. **The same window the whole time.** The target hwnd is captured at the start of the hold
+           and re-checked, so a gaze sweep across the screen mid-hold cannot slide the close onto a
+           different window.
+        3. **No target, no close.** `window_only` is set, and the intent is not even emitted when
+           the eyes are not on a window - the same rule every other destructive action follows.
+        """
+        out: List[Intent] = []
+        if not bool(self.cfg.get("force_close_enabled", True)):
+            self._close_since = None
+            self._close_anchor = None
+            return out
+        if other is None:
+            # one hand only: can never arm, and any half-finished hold is abandoned
+            self._close_since = None
+            self._close_anchor = None
+            self._close_anchor_hwnd = None
+            return out
+
+        both_open = (primary.num_extended >= 3 and other.num_extended >= 3
+                     and not self._is_fist(primary) and not self._is_fist(other)
+                     and not primary.pinches.get("index") and not other.pinches.get("index")
+                     and not primary.pinches.get("middle") and not other.pinches.get("middle")
+                     and not primary.pinches.get("ring") and not other.pinches.get("ring"))
+
+        if not both_open:
+            self._close_since = None
+            self._close_anchor = None
+            self._close_anchor_hwnd = None
+            return out
+
+        if self._close_since is None or self._close_anchor is None:
+            self._close_since = now
+            self._close_anchor = (float(primary.palm_px[0]), float(primary.palm_px[1]),
+                                  float(other.palm_px[0]), float(other.palm_px[1]))
+            self._close_anchor_hwnd = target_hwnd
+            self.last_note = "force close: hold both open hands still"
+            return out
+
+        ax, ay, bx, by = self._close_anchor
+        moved = max(math.hypot(float(primary.palm_px[0]) - ax, float(primary.palm_px[1]) - ay),
+                    math.hypot(float(other.palm_px[0]) - bx, float(other.palm_px[1]) - by))
+        if moved > abs(float(self.cfg.get("force_close_move_px", 60.0))):
+            # it moved, so it is not a hold: re-anchor from here rather than failing outright
+            self._close_since = now
+            self._close_anchor = (float(primary.palm_px[0]), float(primary.palm_px[1]),
+                                  float(other.palm_px[0]), float(other.palm_px[1]))
+            self._close_anchor_hwnd = target_hwnd
+            self.last_note = "force close: hands moved, hold still"
+            return out
+
+        held = now - self._close_since
+        need = abs(float(self.cfg.get("force_close_hold_s", 1.2)))
+        if held < need:
+            return out
+        if (now - self._close_fired_at) < abs(float(self.cfg.get("force_close_cooldown_s", 2.5))):
+            return out
+
+        # the window must still be the one the hold started on
+        if bool(self.cfg.get("force_close_requires_target", True)):
+            if not target_hwnd or target_hwnd != self._close_anchor_hwnd:
+                self.last_note = "force close: no window under your eyes - did nothing"
+                self._close_since = None
+                self._close_anchor = None
+                self._close_anchor_hwnd = None
+                return out
+
+        keys = tuple(self.cfg.get("force_close_keys") or ("ctrl", "alt", "f4"))
+        self._close_fired_at = now
+        # NOTE: `_close_since` is NOT reset here, and that is the whole cooldown mechanism. Clearing
+        # it made the very next frame look like the start of a fresh hold, so a 4 s hold fired twice
+        # (2 taps) instead of once - the cooldown only delayed the second, it did not prevent it.
+        # Leaving `_close_since` alone keeps the elapsed time growing, so the cooldown does its job.
+        # The pose has to leave before `_close_since` is cleared, which is the only re-arm path.
+        self._close_anchor_hwnd = None
+        note = "force close"
+        if bool(self.cfg.get("force_close_requires_target", True)):
+            out.append(Intent("keys.tap", keys=keys, target_hwnd=target_hwnd,
+                              focus_hwnd=target_hwnd, window_only=True, note=note))
+        else:
+            out.append(Intent("keys.tap", keys=keys, note=note))
+        self.last_note = f"force close! {'+'.join(keys)}"
+        return out
+
     def _update_screenshot(self, primary: Optional[HandPose], other: Optional[HandPose],
                            now: float) -> List[Intent]:
         """BOTH hands open -> both fists -> both open, fast: a screenshot.
@@ -1158,6 +1276,11 @@ class GestureEngine:
         self._shot_armed_at = None
         self._shot_fist_t0 = None
         self._shot_fist_start = None
+        # Same argument, worse outcome: a force-close hold left armed through a hand loss would send
+        # CTRL+ALT+F4 to whatever window the NEXT pair of open hands happens to be looking at.
+        self._close_since = None
+        self._close_anchor = None
+        self._close_anchor_hwnd = None
         if reason:
             self.last_note = f"released ({reason})"
         return out

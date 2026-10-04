@@ -6,14 +6,14 @@
 
 Control Windows with your hands through one webcam. Look at a window and it becomes the target; move your index finger and the cursor goes there. No keyboard, no mouse, no wearable.
 
-**13 gestures · gesture locking · desk geometry · multi-monitor · ~46 ms · gaze targeting · gaze tab clicks · desktop overlay · dictation into the field you look at · virtual camera · 376 tests**
+**13 gestures · gesture locking · desk geometry · multi-monitor · ~46 ms · gaze targeting · gaze tab clicks · desktop overlay · gaze metaball · dictation into the field you look at · virtual camera · 441 tests**
 
 <a href="https://github.com/DrGekoz/Kinesis/stargazers"><img src="https://img.shields.io/github/stars/DrGekoz/Kinesis?style=for-the-badge&color=f59e0b" alt="Stars"></a>
 <a href="https://github.com/DrGekoz/Kinesis/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-MIT-22c55e?style=for-the-badge" alt="License"></a>
 <img src="https://img.shields.io/badge/platform-Windows-06b6d4?style=for-the-badge" alt="Platform">
 <img src="https://img.shields.io/badge/python-3.11-8b5cf6?style=for-the-badge" alt="Python">
 <img src="https://img.shields.io/badge/latency-~46ms-f43f5e?style=for-the-badge" alt="Latency">
-<img src="https://img.shields.io/badge/tests-376%20passing-22c55e?style=for-the-badge" alt="Tests">
+<img src="https://img.shields.io/badge/tests-441%20passing-22c55e?style=for-the-badge" alt="Tests">
 <img src="https://img.shields.io/badge/virtual%20camera-OBS-8b5cf6?style=for-the-badge" alt="Virtual camera">
 
 [Gestures](#gestures) · [Quick start](#quick-start) · [Install](#install) · [Which screens](#which-screens) · [Calibration](#calibration) · [Eyes as the pointer](#the-pointer-is-your-eyes) · [Gaze](#gaze) · [Settings](#settings) · [Overlay](#overlay) · [Dictation](#dictation) · [Config](#config) · [Troubleshooting](#troubleshooting) · [Credits](#credits)
@@ -57,6 +57,7 @@ Built for desks with several monitors, not one. Your eyes track what you are foc
 | **Index + pinky** out, middle and ring curled, held | Move the hand **up** / **down** to raise or lower the system volume |
 | **Both hands** open → both fists → open, fast | Screenshot (follows your machine's PrintScreen behaviour — snip-and-select, or straight to the clipboard) |
 | **Left** fist held 2 s | Opens Alt-Tab and holds `Alt`; each right-hand pinch taps `Tab`; opening the left fist commits |
+| **Both hands** open and held **still** (1.2 s) | Force close the window you are looking at (`Ctrl+Alt+F4`). Needs the same window held the whole time, and does nothing if there is no gaze target |
 | `END` | Quit, releasing everything |
 
 Window actions are aimed: the claw acts on the window you were **looking at**. There is no fallback — no gaze target means no minimise, ever, because guessing at the focused window is how a gesture you meant for the browser behind you closes the app you were typing in. Keys, clicks and the wheel still go to the focused window as normal.
@@ -70,6 +71,10 @@ calibrate_gaze.bat   gaze: look at the dots (40 s)
 run.bat              go
 ```
 
+`run.bat` opens the **settings window** first, so you pick which screens this session is for, then runs
+the **gaze calibration** on exactly those screens. Both are on by default because a gaze model is
+fitted to one seat position and one screen layout; `--no-settings` and `--no-calibrate` skip either.
+
 | Command | What it does |
 | --- | --- |
 | `run.bat --dry` | Every action logged, nothing injected |
@@ -77,6 +82,9 @@ run.bat              go
 | `run.bat --no-preview` | Skip the preview window |
 | `run.bat --desk-report` | What your screens, camera and seat actually are |
 | `run.bat --overlay-desktop` | Draw the overlay on the desktop itself |
+| `run.bat --metaball` | The gaze metaball on the desktop: a white outlined blob that swells where you look and leaves a shrinking trail |
+| `run.bat --no-settings` | Skip the settings window that normally opens on startup |
+| `run.bat --no-calibrate` | Skip the gaze calibration that normally runs on startup |
 | `run.bat --vcam-demo` | Watch the overlay styles with no face in frame |
 | `run.bat --tune deadband_px=2.2 --save-config` | Change any setting live and keep it |
 | `run.bat --help` | Everything else |
@@ -266,6 +274,12 @@ real typography (Bahnschrift via Pillow).
 monitor, no focus stealing, real per-pixel transparency. **INSERT** hides and shows it. Only the
 screen you are looking at gets the marker; the others fade out.
 
+**The metaball:** `run.bat --metaball` swaps the marker for one white outlined blob that swells the
+longer you look in one place (up to 80 px), animates to a new position at up to 180 fps, and leaves a
+trail that shrinks back to nothing over 0.5 s. Outline only — a 3 px white rim with a faint fill and
+a soft glow inside and out — so it reads over any window. The trail crosses monitors. Blinks and
+discarded samples never move it.
+
 **Out as a webcam:** the virtual camera re-emits the feed with the overlays drawn on it — select
 "OBS Virtual Camera" in OBS, Discord, Zoom or Teams. `vcam_mode: overlay` gives a plain green
 background for chroma-keying, so the tracking can be keyed over your real camera in OBS.
@@ -347,6 +361,12 @@ Everything lives in `kinesis_config.json` and every key can be overridden live w
 | `eye_corner_mm` / `ipd_mm` | 90 / 63 | Your own eye span, for the distance estimate |
 | `distance_warn_fraction` | 0.25 | Seat drift before the gaze model counts as stale |
 | `desktop_overlay` / `desktop_overlay_hotkey` | false / insert | The desktop overlay and its toggle |
+| `desktop_overlay_style` / `desktop_overlay_panels_per_tick` | "" (follows `vcam_style`) / 3 | Overlay look. `metaball` is the gaze blob. The panel count is ignored for it: the shared trail has to be drawn on every screen every frame, so it is never round-robined |
+| `settings_at_start` / `force_gaze_calibration` | true / true | Open the settings window on startup, and recalibrate the eyes on every run. The screens you pick are the ones calibration spends its dots on |
+| `metaball_*` | see below | `max_diameter_px` 80 · `grow_s` 1.0 · `shrink_s` 0.5 · `outline_px` 3 · `max_fps` 180 · `max_speed_px_s` 20000 |
+| `gaze_reject_px` / `gaze_reject_speed_px_s` | 260 / 20000 | Outlier rejection on the gaze point. The speed gate is 20,000 px/s because gaze runs at 20 Hz, so a one-screen saccade is 38,400 px/s — a tighter gate discards real looks |
+| `gaze_focus_dwell_s` / `gaze_focus_stable_s` / `gaze_focus_stable_px` | 0.9 / 0.25 / 40 | Looking at a window this long focuses it. The point must stay within 40 px for 0.25 s first, or the dwell clock never starts — the two run in sequence, so worst case is 1.15 s |
+| `force_close_enabled` / `force_close_keys` / `force_close_hold_s` | true / ctrl,alt,f4 / 1.2 | Both hands open and held still closes the window you are looking at |
 | `vcam_mode` / `vcam_style` / `vcam_theme` | passthrough / comet / ember | Virtual camera mode and look |
 | `vcam_trail_decay` / `vcam_glow` | 0.86 / 1.15 | Trail length and bloom |
 
@@ -374,7 +394,7 @@ Everything lives in `kinesis_config.json` and every key can be overridden live w
 ## Verification
 
 ```bat
-.venv\Scripts\python -m pytest tests -q       376 passed, 1 skipped (the live-camera one needs the webcam free)
+.venv\Scripts\python -m pytest tests -q       441 passed (the live-camera one needs the webcam free)
 .venv\Scripts\python tools\verify_actions.py  21/21 live OS checks
 .venv\Scripts\python tools\verify_volume.py    10/10 volume-key checks (mixer response skipped where it cannot be read)
 node tools\marketplace_stub.mjs 8787        runs the real Worker locally against an in-memory D1
@@ -389,7 +409,7 @@ node tools\marketplace_stub.mjs 8787        runs the real Worker locally against
 check.bat                                     all of the above, in order
 ```
 
-376 tests cover every gesture, the pose classifier, the click/fist arbitration, gesture locking, the
+441 tests cover every gesture, the pose classifier, the click/fist arbitration, gesture locking, the
 Alt-Tab session, gaze targeting and focus, desk geometry against a hand-built EDID block, overlay
 rendering, and release-all safety — with landmark geometry synthesised at exact joint angles rather
 than recorded, so each classification is checked against a known-correct input.

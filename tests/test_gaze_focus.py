@@ -75,3 +75,94 @@ def test_no_target_clears_the_dwell(app):
     instance._gaze_focus(None, 1000.5)          # gaze left the screen
     instance._gaze_focus(4242, 1000.6)          # so this is a fresh dwell, not a continuation
     assert focused == [], "dwell survived losing the gaze target"
+
+
+# ------------------------------------------------------- the steadiness gate (v1.20.0)
+def _gaze(x, y, valid=True, blink=False, rejected=False):
+    return SimpleNamespace(x=x, y=y, valid=valid, blink=blink, rejected=rejected)
+
+
+def test_a_sweeping_gaze_point_cannot_focus_a_window(app):
+    """The reported bug: "my windows started flying everywhere".
+
+    The dwell alone was 0.15 s, so it completed while the point was still travelling and focus landed
+    on whatever the sweep happened to cross. The point must be STEADY before the dwell may start.
+    """
+    instance, focused = app
+    instance.cfg.set("gaze_focus_stable_s", 0.25)
+    instance.cfg.set("gaze_focus_stable_px", 40.0)
+    t = 1000.0
+    # a gaze point sliding steadily across the screen, one call per frame
+    for i in range(60):
+        t += 0.033
+        instance._gaze_focus(4242, t, _gaze(1000.0 + i * 120.0, 500.0))
+    assert focused == [], (
+        f"a moving gaze point focused a window anyway: {focused}"
+    )
+
+
+def test_a_settled_gaze_point_still_focuses(app):
+    """The steadiness gate must not break the feature it protects."""
+    instance, focused = app
+    instance.cfg.set("gaze_focus_stable_s", 0.25)
+    instance.cfg.set("gaze_focus_stable_px", 40.0)
+    # The look has to be held for the dwell (0.7 s) PLUS the steadiness gate (0.25 s), and the two
+    # run SEQUENTIALLY, not together: the gate only starts the dwell clock once the point has been
+    # still, so the worst case is 0.25 + 0.7 = 0.95 s, plus one frame of slack. Measured by tracing
+    # the timers: `dwell_since` freezes while the steadiness gate is unsatisfied, which is why an
+    # earlier 30-frame version stopped 10 ms short of the dwell and never fired.
+    t = 1000.0
+    for _ in range(40):
+        t += 0.033
+        instance._gaze_focus(4242, t, _gaze(1000.0, 500.0))
+    assert focused == [4242], f"a steady look did not focus: {focused}"
+
+
+def test_a_blink_cannot_complete_a_dwell(app):
+    instance, focused = app
+    instance.cfg.set("gaze_focus_stable_s", 0.0)      # isolate the blink rule
+    t = 1000.0
+    for _ in range(10):
+        t += 0.033
+        instance._gaze_focus(4242, t, _gaze(1000.0, 500.0))
+    t += 0.033
+    instance._gaze_focus(4242, t, _gaze(1000.0, 500.0, valid=False, blink=True))
+    t += 0.8
+    instance._gaze_focus(4242, t, _gaze(1000.0, 500.0))
+    assert focused == [], "a blink let a dwell through"
+
+
+def test_a_rejected_sample_cannot_complete_a_dwell(app):
+    """A discarded sample is not a measurement, so it cannot aim a window at anything."""
+    instance, focused = app
+    instance.cfg.set("gaze_focus_stable_s", 0.0)
+    t = 1000.0
+    for _ in range(10):
+        t += 0.033
+        instance._gaze_focus(4242, t, _gaze(1000.0, 500.0))
+    t += 0.033
+    instance._gaze_focus(4242, t, _gaze(1000.0, 500.0, rejected=True))
+    t += 0.8
+    instance._gaze_focus(4242, t, _gaze(1000.0, 500.0))
+    assert focused == [], "a rejected sample let a dwell through"
+
+
+def test_after_focusing_the_point_must_leave_and_come_back(app):
+    """Otherwise one long look keeps re-focusing after the user has moved on inside that window."""
+    instance, focused = app
+    instance.cfg.set("gaze_focus_stable_s", 0.0)
+    t = 1000.0
+    for _ in range(10):
+        t += 0.033
+        instance._gaze_focus(4242, t, _gaze(1000.0, 500.0))
+    t += 0.8
+    instance._gaze_focus(4242, t, _gaze(1000.0, 500.0))
+    assert focused == [4242]
+    # still looking at the same window, dwell runs again
+    t += 0.033
+    instance._gaze_focus(4242, t, _gaze(1000.0, 500.0))
+    t += 0.8
+    instance._gaze_focus(4242, t, _gaze(1000.0, 500.0))
+    assert focused == [4242], (
+        f"one continuous look re-focused the same window: {focused}"
+    )

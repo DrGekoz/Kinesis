@@ -6,7 +6,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 import cv2
 
@@ -49,20 +49,26 @@ GESTURE_HELP = """
  claw, then spread the fingers      maximise / fullscreen  (f = YouTube, F11 = otherwise)
  index + pinky out, held, up/down   system volume        (middle + ring stay curled)
  BOTH hands open -> fist -> open    screenshot           (fast, with the fists moving)
+ BOTH hands open, held STILL        force close          Ctrl+Alt+F4 on the window you look at
  thumb + pinky out (shaka)          hold Ctrl+Space     (push to talk)
  eye gaze, continued                scroll, pick the target window, click browser tabs
  END key                            quit
 
  Window actions need a target: if your eyes are not on a window they do nothing at all.
+ A blink or a discarded gaze sample never moves the pointer and never aims a gesture.
 """
 
 
-def _maybe_calibrate(cfg, gaze, engine=None) -> bool:
+def _maybe_calibrate(cfg, gaze, engine=None, force: bool = False, mode: str = "full") -> bool:
     """Offer to run the gaze calibration wizard from inside the app.
 
     Printing "run calibrate_gaze.bat" was never enough. To someone who does not know what that file
     is, an uncalibrated app is simply an app whose eye tracking does not work, and it stays that way -
     so ask, and run it here.
+
+    `force=True` skips the question entirely: this is the "calibrate on every run" mode, where a
+    prompt would be a prompt that always gets the same answer. `mode` picks the sweep ("full" grid or
+    "quick" one dot per monitor).
 
     THE CAMERA HAS TO BE HANDED OVER. This runs while the app is already up and tracking, so the
     webcam is open in this process. The wizard is a separate process, and a webcam can only be held
@@ -75,19 +81,25 @@ def _maybe_calibrate(cfg, gaze, engine=None) -> bool:
     again afterwards - on both paths, including a failed one, so declining the calibration cannot
     leave the app with no camera.
     """
-    try:
-        if not sys.stdin or not sys.stdin.isatty():
+    quick = str(mode).strip().lower().startswith("q")
+    if force:
+        # no prompt, and no early exit for a non-tty: this path is the default startup behaviour,
+        # and refusing to calibrate because stdin is redirected would make the default a lie
+        answer = "q" if quick else "f"
+    else:
+        try:
+            if not sys.stdin or not sys.stdin.isatty():
+                return False
+        except Exception:
             return False
-    except Exception:
-        return False
-    try:
-        answer = input(" Calibrate now?  [F]ull sweep / [Q]uick / [N]ot now: ").strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        print()
-        return False
-    if not answer or answer.startswith("n"):
-        return False
-    quick = answer.startswith("q")
+        try:
+            answer = input(" Calibrate now?  [F]ull sweep / [Q]uick / [N]ot now: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return False
+        if not answer or answer.startswith("n"):
+            return False
+        quick = answer.startswith("q")
     script = Path(__file__).resolve().parent.parent / "calibrate_gaze.py"
     if not script.is_file():
         print(f"[gaze] cannot find {script}")
@@ -100,8 +112,20 @@ def _maybe_calibrate(cfg, gaze, engine=None) -> bool:
         released = True
     print(f"[gaze] starting the {'quick' if quick else 'full'} calibration - sit normally and look "
           f"at each dot without moving your head")
+    cmd = [sys.executable, "-u", str(script)] + (["--quick"] if quick else [])
+    # calibrate only the screens this session is tracking. Both wizards default to the enabled set,
+    # and a forced startup calibration must honour it too - otherwise every run would spend its dots
+    # on the outer screens that appearance-based gaze cannot hit anyway.
     try:
-        rc = subprocess.call([sys.executable, "-u", str(script)] + (["--quick"] if quick else []))
+        from .settings_window import calibration_arg
+        arg = calibration_arg(w.enumerate_monitors(), cfg.get("enabled_monitors") or [])
+    except Exception:
+        arg = ""
+    if arg:
+        cmd += ["--monitors", arg]
+    print(f"[gaze] wizard: {' '.join(cmd)}")
+    try:
+        rc = subprocess.call(cmd)
     except Exception as exc:
         print(f"[gaze] could not run the wizard: {exc}")
         rc = 1
@@ -153,6 +177,8 @@ class KinesisApp:
         self.desktop_overlay = DesktopOverlay(cfg, self.monitors, lambda: self.gaze.state)
         self._gaze_dwell_hwnd = None
         self._gaze_dwell_since = 0.0
+        self._gaze_still_since = 0.0        # when the gaze point last stopped moving
+        self._gaze_still_xy: Optional[Tuple[float, float]] = None
         self._gaze_focus_at = 0.0
         self.last_ptt_focus = ""
         # settings window: F2 by default, disabled with settings_hotkey = "none"
@@ -314,9 +340,22 @@ class KinesisApp:
 
     def _resolve_gaze_target(self, gaze, now: float):
         """Turn the gaze point into the window the user is looking at. Rate limited: the window
-        walk is an EnumWindows sweep and gaze only refreshes at gaze_hz anyway."""
+        walk is an EnumWindows sweep and gaze only refreshes at gaze_hz anyway.
+
+        A REJECTED OR BLINKING SAMPLE RESOLVES TO NOTHING. Every destructive gesture aims at this
+        hwnd, so while the gaze point is being thrown around by a bad landmark frame there must be no
+        target at all - otherwise "the window I am looking at" becomes "whatever the jitter most
+        recently crossed", which is how a look-at gesture ends up un-maximising and minimising
+        windows nobody asked about.
+        """
         if not bool(self.cfg["gaze_target_enabled"]) or not getattr(gaze, "valid", False):
             return self._gaze_target
+        if bool(self.cfg.get("gaze_require_stable", True)):
+            if getattr(gaze, "blink", False) or getattr(gaze, "rejected", False):
+                self._gaze_target_at = now
+                self._gaze_target = None      # drop the CACHED window too, not just this tick
+                self._gaze_target_title = ""
+                return None
         if now - self._gaze_target_at < float(self.cfg["gaze_target_refresh_s"]):
             return self._gaze_target
         self._gaze_target_at = now
@@ -329,17 +368,62 @@ class KinesisApp:
         self._gaze_target = hwnd
         return hwnd
 
-    def _gaze_focus(self, hwnd, now: float) -> None:
+    def _gaze_focus(self, hwnd, now: float, gaze=None) -> None:
         """Looking at a window for a moment makes it the focused window.
 
         Gaze already decides which window a *gesture* acts on; this is the other half - bringing the
         window you are looking at to the front, so typing and the keyboard land there too. Dwell
         gated and cooled down so it cannot fight the user.
+
+        TWO gates, because one was not enough. The dwell alone (0.15 s) fired while the gaze point
+        was still sweeping, so focus landed on whatever the sweep happened to cross - reported as
+        "windows started flying everywhere". Dwell alone cannot fix that on its own, because during a
+        sweep the dwell timer keeps restarting on each new window yet still completes inside one
+        window when the point lingers. So the point must ALSO be steady: `gaze_focus_stable_px` for
+        `gaze_focus_stable_s` before the dwell clock is allowed to start at all. A blink or a
+        rejected sample resets both, so neither can complete on garbage.
         """
         if not bool(self.cfg["gaze_focus_enabled"]) or not hwnd:
             self._gaze_dwell_hwnd = None
             self._gaze_dwell_since = 0.0
+            self._gaze_still_since = 0.0
+            self._gaze_still_xy = None
             return
+
+        # a blink or a discarded sample is not "looking at" anything
+        if gaze is not None and (getattr(gaze, "blink", False)
+                                 or getattr(gaze, "rejected", False)
+                                 or not getattr(gaze, "valid", False)):
+            self._gaze_dwell_hwnd = None
+            self._gaze_dwell_since = 0.0
+            self._gaze_still_since = 0.0
+            self._gaze_still_xy = None
+            return
+
+        # --- steadiness gate: the point must stop moving before it counts as looking ---
+        tol = abs(float(self.cfg.get("gaze_focus_stable_px", 40.0)))
+        need_still = abs(float(self.cfg.get("gaze_focus_stable_s", 0.25)))
+        if gaze is not None and getattr(gaze, "valid", False):
+            gx, gy = float(gaze.x), float(gaze.y)
+            anchor = self._gaze_still_xy
+            settled = anchor is not None and \
+                abs(gx - anchor[0]) < tol and abs(gy - anchor[1]) < tol
+            if settled:
+                # within tolerance of the anchor: keep whatever timer is running. If none is, the
+                # anchor was set on the FIRST sighting of this position, so the timer starts now.
+                if not self._gaze_still_since:
+                    self._gaze_still_since = now
+            else:
+                # beyond tolerance: a new anchor, and the timer restarts from here
+                self._gaze_still_xy = (gx, gy)
+                self._gaze_still_since = 0.0
+            if need_still and (not self._gaze_still_since
+                               or (now - self._gaze_still_since) < need_still):
+                # still moving: no dwell may accumulate
+                self._gaze_dwell_hwnd = None
+                self._gaze_dwell_since = 0.0
+                return
+
         if hwnd != self._gaze_dwell_hwnd:
             self._gaze_dwell_hwnd = hwnd
             self._gaze_dwell_since = now
@@ -358,6 +442,11 @@ class KinesisApp:
             return
         ok = w.focus_and_verify(hwnd, allow_alt_trick=not self.runner.alt_held)
         self._gaze_focus_at = now
+        # the point must leave and come back before it can focus again, so one long look cannot
+        # keep re-focusing after the user has moved on inside that window
+        self._gaze_dwell_hwnd = None
+        self._gaze_dwell_since = 0.0
+        self._gaze_still_since = 0.0
         self.last_action = f"gaze focus {'ok' if ok else 'failed'}: {info.title[:36]}"
 
     def _publish_vcam(self, frame, poses, gaze) -> None:
@@ -385,7 +474,43 @@ class KinesisApp:
         self._build_geometry(w0, h0)     # after gaze.start: the model knows the calibrated seat distance
         if focus_target.prewarm():
             print("[focus] UI Automation ready (dictation clicks into the field you are looking at)")
-        if self.gaze.enabled and not self.gaze.is_calibrated:
+
+        # The settings window comes BEFORE calibration, and that order is the whole point: it is
+        # where the screens for this session get chosen, and the forced calibration below runs only
+        # on those screens. Settings-first means the wizard spends its dots on the displays actually
+        # being tracked; the other way round it calibrates screens the user is about to switch off.
+        if self._open_settings_at_start or bool(self.cfg.get("settings_at_start", False)):
+            self._open_settings_at_start = False
+            print()
+            print("[settings] opening the settings window - pick the screens for this session, "
+                  "then Save")
+            self._open_settings()
+            # the selection may have changed the layout the geometry was built from
+            self._build_geometry(w0, h0)
+
+        if self.gaze.enabled and bool(self.cfg.get("force_gaze_calibration", False)):
+            # EVERY RUN, NOT ONLY WHEN THERE IS NO MODEL. A gaze model is fitted to one seat
+            # position, one screen layout and one lighting condition; using it after any of those
+            # changed is what produces a pointer that wanders. The reported symptom ("jittery,
+            # moving all over the place") is exactly what a stale model looks like, so calibrating is
+            # the default rather than a repair step. `--no-calibrate` skips it.
+            print()
+            print("=" * 78)
+            print(" CALIBRATING EYE GAZE FOR THIS RUN")
+            print("=" * 78)
+            print(" The model has to be fitted to where you are sitting now, so it is retrained on")
+            print(" every start. Sit normally and look at each dot without moving your head.")
+            print()
+            mode = str(self.cfg.get("startup_calibration", "full")).strip().lower()
+            print(f"[gaze] forced calibration at startup ({mode} sweep)")
+            if _maybe_calibrate(self.cfg, self.gaze, self.engine, force=True, mode=mode):
+                self.gaze.start()
+                print("[gaze] recalibrated - using the new model")
+            else:
+                print("[gaze] keeping the previous model (or continuing without gaze)")
+            print("=" * 78)
+            print()
+        elif self.gaze.enabled and not self.gaze.is_calibrated:
             # A user cannot act on "run calibrate_gaze.bat" printed into a scrolling console - this
             # is the step that leaves eye tracking dead for good, so offer to do it right here.
             print()
@@ -432,10 +557,6 @@ class KinesisApp:
         self.vcam.start(cam_fps)
         time.sleep(0.3)                       # let the threads fill their slots
         try:
-            if self._open_settings_at_start:
-                self._open_settings_at_start = False
-                print("[settings] opening the settings window (--settings)")
-                self._open_settings()
             while not self._stop:
                 now = time.perf_counter()
                 poses, frame, latency = self.engine.update()
@@ -445,7 +566,7 @@ class KinesisApp:
                 # gaze is fed the raw (unmirrored) frame the estimator was calibrated on
                 gaze_state = self.gaze.update(self.engine.raw_frame(), now)
                 target_hwnd = self._resolve_gaze_target(gaze_state, now)
-                self._gaze_focus(target_hwnd, now)
+                self._gaze_focus(target_hwnd, now, gaze_state)
 
                 primary = self.gestures.primary_hand(poses)
                 aim = None
@@ -592,6 +713,15 @@ class KinesisApp:
 
         self.gestures.cursor_from_hand = False
         x, y = float(gaze.x), float(gaze.y)
+
+        # A BLINK OR A REJECTED SAMPLE MUST NOT MOVE THE POINTER. Both cases used to be ways for the
+        # pointer to travel on data that is not a gaze measurement: a blink reported the previous
+        # point as valid while the eyes rolled, and a rejected sample carried the pre-excursion
+        # value. Both are frozen here - the point stands still until a real measurement arrives.
+        if bool(self.cfg.get("gaze_blink_guard", True)) and \
+                (getattr(gaze, "blink", False) or getattr(gaze, "rejected", False)):
+            return []
+
         if self._eye_cursor is None:
             self._eye_cursor = (x, y)
             self._gaze_faulted("")

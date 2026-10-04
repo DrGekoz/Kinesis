@@ -88,3 +88,71 @@ def test_gaze_still_owns_the_pointer_after_a_fallback_frame():
     app.gaze._estimator = object()
     app._gaze_cursor(_gaze(300.0, 200.0))
     assert app.gestures.cursor_from_hand is False
+
+
+# --------------------------------------------------------------- blink / rejected guard
+def test_a_blink_never_moves_the_pointer():
+    """The reported bug: "whenever I blink, the mouse-pointer moved down on the screen".
+
+    A blink reports the previous point, so an unguarded eye-cursor turns one dropped frame into a
+    pointer move. The guard must return nothing at all, not a move to where it already was.
+    """
+    app = _app(gaze_cursor_deadband_px=0.0)
+    app._gaze_cursor(_gaze(1000.0, 500.0))
+    blinked = GazeState(x=1000.0, y=980.0, valid=False, blink=True, age=0.0)
+    assert app._gaze_cursor(blinked) == [], "a blink moved the pointer"
+
+
+def test_a_rejected_sample_never_moves_the_pointer():
+    app = _app(gaze_cursor_deadband_px=0.0)
+    app._gaze_cursor(_gaze(1000.0, 500.0))
+    rejected = GazeState(x=1000.0, y=200.0, valid=True, rejected=True, age=0.0)
+    assert app._gaze_cursor(rejected) == [], "a discarded sample moved the pointer"
+
+
+def test_the_pointer_resumes_after_a_blink():
+    app = _app(gaze_cursor_deadband_px=0.0)
+    app._gaze_cursor(_gaze(1000.0, 500.0))
+    app._gaze_cursor(GazeState(x=1000.0, y=980.0, valid=False, blink=True, age=0.0))
+    moves = app._gaze_cursor(_gaze(1000.0, 520.0))
+    assert moves, "the pointer never came back after a blink"
+
+
+def test_the_blink_guard_can_be_switched_off():
+    app = _app(gaze_blink_guard=False, gaze_cursor_deadband_px=0.0)
+    app._gaze_cursor(_gaze(1000.0, 500.0))
+    blinked = GazeState(x=1000.0, y=980.0, valid=True, blink=True, age=0.0)
+    assert app._gaze_cursor(blinked), "the guard was disabled but still suppressed the move"
+
+
+# --------------------------------------------------------------- gaze target safety
+def test_a_rejected_sample_resolves_to_no_target_window():
+    """Every destructive gesture aims at the gaze target, so while the point is being thrown around
+    there must be no target - otherwise "the window I am looking at" becomes whatever the jitter
+    most recently crossed."""
+    from types import SimpleNamespace
+
+    import kinesis.winapi as w
+    app = _app(gaze_require_stable=True, gaze_target_enabled=True)
+    monkey_calls = []
+
+    def fake_topmost(x, y, monitors, *a, **k):
+        monkey_calls.append((x, y))
+        return 4242
+
+    original = w.topmost_window_at
+    w.topmost_window_at = fake_topmost
+    try:
+        good = GazeState(x=100.0, y=100.0, valid=True, age=0.0)
+        assert app._resolve_gaze_target(good, 1000.0) == 4242
+
+        rejected = GazeState(x=100.0, y=100.0, valid=True, rejected=True, age=0.0)
+        assert app._resolve_gaze_target(rejected, 1001.0) is None, (
+            "a rejected sample still produced a target window"
+        )
+        blinked = GazeState(x=100.0, y=100.0, valid=False, blink=True, age=0.0)
+        assert app._resolve_gaze_target(blinked, 1002.0) is None, (
+            "a blink still produced a target window"
+        )
+    finally:
+        w.topmost_window_at = original

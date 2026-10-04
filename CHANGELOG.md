@@ -5,6 +5,133 @@ All notable changes to Kinesis. The README stays compact on purpose: this is whe
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are
 [semantic](https://semver.org/spec/v2.0.0.html).
 
+## [1.20.0] — the eye pointer you can see, and the jitter that caused it
+
+**The report:** eye-gaze moved the mouse to the right place but jittered all over it; a blink dragged
+the pointer *down*; window focus was so fast windows "started flying everywhere"; the app appeared to
+click when it was not clicking; and there was no way to see that eye tracking was happening at all.
+
+### The jitter was not film grain. It was the gaze model's gain.
+
+Measured on the shipped model before changing anything:
+
+| perturbation of the 486 face-landmark features | pointer travel |
+| --- | --- |
+| noise sigma = 0.002 (0.2%, well under frame-to-frame landmark noise) | **1,367,037 px** |
+| noise sigma = 0.005 | **3,093,144 px** |
+
+The model is a ridge regression over 486 features fitted from 222 calibration samples — rank-deficient
+by more than two to one. Invisible landmark wobble throws the pointer across the desk a *million* times
+over. **This is why no amount of smoothing could fix it**: to swallow a million-pixel excursion a
+deadband would have to discard essentially all real motion. It is a gain problem, so the fix had to be
+rejection, not lag.
+
+### `GazeStabiliser` (`kinesis/filters.py`) — zero latency, and three bugs found by measuring it
+
+Four gates in order: speed, windowed outlier vote, adaptive deadband, slew limit. No buffering, so no
+added latency. Getting it right took three corrections, each caught by measurement rather than by
+looking at it:
+
+1. **The speed gate defaulted to 9,000 px/s, which is slower than a real saccade.** Gaze refreshes at
+   20 Hz, so on this machine's 7680 px virtual desktop a one-screen move (1920 px) is 38,400 px/s and a
+   third of the whole desk is 50,688 px/s. The original default rejected all of them: the pointer
+   simply refused to follow a real look. Now **20,000 px/s** — passes a half-screen jump in one frame,
+   still rejects the million-pixel excursions by three orders of magnitude.
+
+2. **A fixed outlier gate ate real motion.** A 200-step sweep across the desk had **195 of 200 steps
+   discarded**, because every step was judged against a window made of the *old* positions. The gate is
+   now `max(reject_px, recent spread)`, widened further when the eye is demonstrably travelling. Measured
+   after: **199/200 accepted**, ±6 px resting jitter **0/60 rejected**, and the 1 M-px misfire still caught
+   both at rest and mid-sweep.
+
+3. **The deadband then swallowed the saccade anyway.** A 600 px saccade cleared the outlier gate and
+   still tracked to the old position, because the live deadband compared the window mean against the
+   held point — and on the first frame of a saccade the mean is four old samples and one new one, so it
+   moved only to 1120 px, a fifth of the way. A visible quarter-second lag on *every* look. So during
+   confirmed motion the deadband stands down **and the window resets**, taking the sample at face value.
+   The history was describing where the eye *was*.
+
+### A blink is not a gaze, and can no longer move the pointer
+
+A blink used to be a *valid* point that happened to sit low, which is why it dragged the pointer down.
+Now `_decay` reports `valid=False` for a blink instead of serving the previous point as valid, and
+`_gaze_cursor()` returns no intent at all — so the pointer cannot move and no gesture can be aimed.
+
+### Windows stop flying around
+
+Two independent causes, both closed:
+- **A rejected or blinking sample resolves to no target window.** A jittered gaze crossing a window can
+  no longer make that window the target of a destructive gesture.
+- **Gaze focus now requires steadiness.** The point must stay within 40 px for 0.25 s before the dwell
+  clock starts at all, and the dwell is **0.9 s** (was 0.15 s). The gate and the dwell run in sequence,
+  so worst case is 1.15 s. After focusing, the point must leave and come back — one long look cannot
+  keep re-focusing.
+
+### Force close: `Ctrl+Alt+F4` on both hands, held still
+
+Deliberately **not** a pinch: thumb+index is the left click and thumb+middle is the right click, so pinch
+is the most-travelled shape there is. Both hands open and held **still** for 1.2 s is provably disjoint
+from every other gesture — the screenshot gesture needs the hands to *move*. It needs the same window
+held for the whole hold, does nothing with no gaze target, and fires once per hold.
+
+> This one had a real bug found by a test: clearing `_close_since` on fire made the next frame look like
+> a fresh hold, so a 4 s hold fired **twice**. The cooldown only delayed the second; it did not prevent it.
+> The pose now has to leave before it re-arms.
+
+### The gaze metaball (`kinesis/metaball.py`) — `--metaball`
+
+A white outlined blob that swells the longer you look in one place (to 80 px), animates to a new position
+at up to 180 fps, and leaves a trail that shrinks to nothing over 0.5 s. Outline only: a 3 px white rim,
+faint fill, soft glow in and out, so it reads over any window. Measured on a real render: **255 rim /
+~48 interior**, 80 px across.
+
+The Win32 side already existed — `winapi.py` creates the overlay with `WS_EX_LAYERED | WS_EX_TRANSPARENT
+| WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW` and per-pixel alpha. This is a **style on that
+existing window**, not a second overlay path.
+
+Split into `MetaballState` (shared, monitor-independent) and `MetaballField` (per-panel) because the
+trail has to **cross monitors** and the kernel is expensive enough that stamping per panel would triple
+the cost. Round-robin panel updates are disabled for this style.
+
+**30 → 144 fps at 1080p**, four measured wins: `cv2.merge` instead of three numpy writes;
+`convertScaleAbs` instead of the float path; a **dirty rect** so only the blob's ~500 px box is touched
+(`draw` alone: 29 ms → 0.5 ms); and a premultiply into a rect view (7.5 ms → 0.04 ms).
+
+Three silent-rendering bugs were found by looking at the output rather than the code: an erosion kernel
+that collapsed to 1×1 at scale 3 (so the outline was always empty), a double `/255` after the upscale, and
+a `np.clip` applied to a 0–1 array as if it were 0–255 (everything below 1.0 collapsed to 1). Plus
+`cv2.resize` silently writing zeros when handed a float64 source and a uint8 destination.
+
+### Startup: settings first, then calibration
+
+`run.bat` now opens the **settings window** and runs **gaze calibration** on every run — a gaze model
+is fitted to one seat position and one screen layout, so both were stale-prone. Order matters: screens
+are selected *before* calibration, so its dots land on the right displays. `--no-settings` and
+`--no-calibrate` skip either.
+
+### Camera resolution: measured, and left alone
+
+Asked for 1280×720. Measured on this C920 over DSHOW:
+
+| ask | delivered | fps |
+| --- | --- | --- |
+| 640×480 | 640×480 | **14.0** |
+| 1280×720 | 1280×720 | 8.1 |
+| 1920×1080 | 1920×1080 | 4.0 |
+
+MJPG is ignored by the driver (reports YUY2 either way). 720p **halves** the frame rate, so it stays at
+640×480 — `frame_width` / `frame_height` are still changeable with `--tune`. A same-frame test also showed
+the two resolutions produce feature differences of 0.021 mean, which the model above maps to hundreds of
+pixels, so 720p costs 6 fps for no measurable gain.
+
+### Also
+
+- Orlosky's `EyeTracker` (the video's approach: nose-derived head frame, per-eye ray intersection, ellipse
+  pupil fitting) was analysed and **not adopted** — it needs a second camera and an IR one for real
+  accuracy, assumes 640×480, and its multipoint calibration is unfinished. The nose-frame idea is worth a
+  separate before/after test; details in the CHANGELOG for 1.20.0 in session history.
+- 377 → **441 tests**.
+
 ## [1.19.0] — eye gaze and hand tracking, running at the same time
 
 **The report:** after calibration the app asked the user to run `run.bat` instead of doing it

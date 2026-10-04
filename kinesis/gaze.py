@@ -20,6 +20,7 @@ from typing import Optional, Tuple
 
 import numpy as np
 
+from .filters import GazeStabiliser
 from .winapi import virtual_screen
 
 
@@ -36,6 +37,7 @@ class GazeState:
     distance_mm: float = 0.0    # estimated distance from the screen (see geometry)
     distance_ok: bool = True    # within range and close to the calibration distance
     distance_note: str = ""
+    rejected: bool = False      # this sample was discarded as an excursion
 
     def as_point(self) -> Optional[Tuple[int, int]]:
         return (int(self.x), int(self.y)) if self.valid else None
@@ -87,6 +89,23 @@ class GazeEngine:
         self._tap = None
         self._camera = None
         self._span_ema = 0.0
+        # Outlier rejection on the predicted point. Measured necessity: see GazeStabiliser - the
+        # gaze model is rank-deficient and a 0.2% landmark wobble throws the pointer a million
+        # pixels, so the excursion has to be rejected rather than smoothed.
+        self._stab = GazeStabiliser(
+            reject_px=float(self.cfg.get("gaze_reject_px", 260.0)),
+            window=int(self.cfg.get("gaze_stabilise_window", 5)),
+            speed_max_px_s=float(self.cfg.get("gaze_reject_speed_px_s", 9000.0)),
+            deadband_px=float(self.cfg.get("gaze_stabilise_deadband_px", 3.0)),
+            deadband_gain=float(self.cfg.get("gaze_stabilise_deadband_gain", 2.0)),
+            slew_px=float(self.cfg.get("gaze_slew_px", 900.0)),
+        )
+        # The last point the eyes were NOT blinked at. A blink must not move the pointer, and it
+        # must not leave it parked at the last pre-blink value either - that is how a blink ends up
+        # reading as "looked down" (the eyes roll, then the decay holds the old y).
+        self._last_open: Optional[Tuple[float, float]] = None
+        self._blink_since = 0.0
+        self._blink_count_reported = 0
         # is_calibrated unpickles the model, so the verdict is memoised. Cleared by
         # set_model_path(), by train() and by stop()-then-start(), so a freshly written model
         # is never reported as the old (or a stale True) answer.
@@ -307,6 +326,11 @@ class GazeEngine:
         # memoised verdict is dropped here: a later start() must re-read the file rather than
         # trust a verdict computed before the wizard ran.
         self._loadable_cache = False
+        # The stabiliser's history belongs to the old model. Keeping it would let the first sample
+        # from a newly calibrated model be judged against the previous one's points.
+        self._stab.reset()
+        self._last_open = None
+        self._blink_since = 0.0
 
     # ------------------------------------------------------------------ per frame
     def update(self, frame, now: Optional[float] = None) -> GazeState:
@@ -336,8 +360,18 @@ class GazeEngine:
         self.faces += 1
         self._state.face = True
         if blink:
+            # A BLINK IS NOT A GAZE. Reported as the report made: while the eyelids close the eyes
+            # roll, and the old code simply decayed the point, so the pointer inherited the last
+            # pre-blink vertical value and slid down with the roll. Worse, `raw` kept feeding the
+            # eye-cursor smoothing from a stale point. So a blink now:
+            #   * invalidates the estimate outright (no stale x/y to inherit),
+            #   * is never used to steer the cursor, and
+            #   * resumes from the last OPEN point rather than from wherever the roll left it.
             self.blinks += 1
+            if not self._blink_since:
+                self._blink_since = now
             return self._decay(now, blink=True)
+        self._blink_since = 0.0
 
         try:
             x, y = self._estimator.predict(np.array([features]))[0]
@@ -351,20 +385,44 @@ class GazeEngine:
         left, top, width, height = virtual_screen()
         x = min(max(float(x), left), left + width - 1)
         y = min(max(float(y), top), top + height - 1)
+
+        # Reject the excursion. Returns None when this sample is physically impossible, in which
+        # case the last good point stands: the pointer freezes for one frame instead of being thrown
+        # across the desk, and the next good sample is accepted on the frame it arrives.
+        stable = self._stab(x, y, now)
+        if stable is None:
+            self._last_valid = now
+            prev = self._state
+            self._state = GazeState(x=prev.x, y=prev.y, valid=True, blink=False, age=0.0,
+                                    raw=prev.raw, face=True, rejected=True)
+            return self._state
+        x, y = stable
+        self._last_open = (x, y)
         self._last_valid = now
         self._state = GazeState(x=x, y=y, valid=True, blink=False, age=0.0, raw=(x, y), face=True)
         return self._state
 
     def _decay(self, now: float, blink: bool = False) -> GazeState:
         """Keep reporting the last point for a short grace period (a blink or a dropped frame is
-        not "looked away"), then mark it invalid."""
+        not "looked away"), then mark it invalid.
+
+        A BLINK IS EXCLUDED ON PURPOSE. Reporting the previous point as `valid` while the eyelids
+        are shut is what made a blink read as "looked down": the roll during the blink changed the
+        eye geometry, and the pointer inherited a stale vertical value that the eye-cursor smoothing
+        then carried on with. While blinking, the state is invalid so nothing downstream - the
+        cursor, the gaze scroller, the window target, the focus dwell - can act on it. The last OPEN
+        point is what the pointer falls back to when the eyes come back up, not a blink-era value.
+        """
         age = now - self._last_valid if self._last_valid else 999.0
-        if age > float(self.cfg["gaze_max_age_s"]):
+        if blink:
             self._state = GazeState(x=self._state.x, y=self._state.y, valid=False,
-                                    blink=blink, age=age, face=self._state.face)
+                                    blink=True, age=age, face=self._state.face)
+        elif age > float(self.cfg["gaze_max_age_s"]):
+            self._state = GazeState(x=self._state.x, y=self._state.y, valid=False,
+                                    blink=False, age=age, face=self._state.face)
         else:
             self._state = GazeState(x=self._state.x, y=self._state.y, valid=True,
-                                    blink=blink, age=age, raw=self._state.raw,
+                                    blink=False, age=age, raw=self._state.raw,
                                     face=self._state.face)
         return self._state
 
