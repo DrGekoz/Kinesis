@@ -5,6 +5,72 @@ All notable changes to Kinesis. The README stays compact on purpose: this is whe
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are
 [semantic](https://semver.org/spec/v2.0.0.html).
 
+## [1.20.1] — the actual cause of the jitter: the scaler dividing by its own noise
+
+**Found after 1.20.0 shipped, by measuring instead of guessing.** 1.20.0 made the jitter survivable
+with `GazeStabiliser`, which rejects excursions the model produces. This release removes the cause.
+
+### The ridge penalty was never the problem
+
+The 1.20.0 sweep found that raising the ridge penalty reduced noise gain but never fixed it — even
+`alpha=10000` still threw the pointer **145,000 px** from invisible noise. A penalty that strong
+should have destroyed the model outright, so the gain was being applied *after* it. It was.
+
+`vendor/eyetrax/src/eyetrax/models/base.py` wraps every model in a `StandardScaler`, which divides each
+feature by its standard deviation across the calibration samples. sklearn rescues an **exactly** zero
+variance — and a std of `1e-8` sails straight through.
+
+Measured on the shipped 222-sample model (`tools/probe_gaze_gain.py`):
+
+| feature | calibration std | pointer gain from a 0.2% wobble |
+| --- | --- | --- |
+| 461 | 1.068e-08 | **617,784 px** |
+| 278 | 4.742e-08 | 179,662 px |
+| 50 | 4.992e-08 | 122,116 px |
+| 276 | 1.173e-07 | 39,185 px |
+| 48 | 1.180e-07 | 30,787 px |
+
+**7 features** sat below `1e-4`. Six of them were essentially constant during calibration — dots where
+the head barely moved — so dividing real-world landmark wobble by `1e-8` amplified it a hundred million
+times. The independent sum over all 486 features was **656,881 px** of pointer travel from noise no one
+could see.
+
+### The fix, and what it measures
+
+`BaseModel.MIN_FEATURE_SCALE = 1e-4`. After fitting, any feature whose calibration std is below the floor
+has its `scale_` set to `1.0` — left alone rather than divided by a quantity that is itself noise. The
+feature is kept, not discarded. The count is printed, because a calibration that quietly produces a
+broken model is the failure mode of this whole area.
+
+`tools/verify_gaze_gain_fix.py`, on the real 486-feature model, leave-one-dot-out over all 222 samples:
+
+| configuration | noise gain | LOO median | dots hit |
+| --- | --- | --- | --- |
+| alpha=1, raw scaler | 56,288 px | 55 px | 208/222 |
+| **alpha=1 + scale floor** | **378 px** | 54 px | **210/222** |
+| alpha=100, raw scaler | 23,468 px | 129 px | 172/222 |
+| alpha=100 + scale floor | 32 px | 127 px | 174/222 |
+| alpha=1000, raw scaler | 7,326 px | 213 px | 105/222 |
+| alpha=1000 + scale floor | 7 px | 213 px | 106/222 |
+
+**149x less noise gain at alpha=1, and accuracy slightly *better*** — 210/222 dots against 208/222.
+
+`alpha=1.0` was already the default, which is why it now simply works: the high-alpha settings that
+looked necessary in 1.20.0 were only ever compensating for the amplifier, and they cost accuracy
+(alpha=1000 drops to 106/222 while buying 7 px of gain nobody needs).
+
+### No action needed
+
+The fix is in `train()`, and `run.bat` recalibrates on every run as of 1.20.0, so the next start rebuilds
+the model correctly. An existing `gaze_model.pkl` keeps its bad scaling until then — which is what
+`GazeStabiliser` is there to survive in the meantime.
+
+**442 → 451 tests**, nine new ones covering the floor: that a constant feature is not divided by its own
+noise, that healthy features are untouched, that noise gain collapses by >50x with the floor and shows no
+amplification without it, that the model still fits its own training data, that the floor is idempotent
+and persisted through a pickle round-trip, and that `predict` still works on a model whose scaler was
+never floored.
+
 ## [1.20.0] — the eye pointer you can see, and the jitter that caused it
 
 **The report:** eye-gaze moved the mouse to the right place but jittered all over it; a blink dragged
